@@ -1,12 +1,12 @@
 [
   {
-    "packageName": "tellybiz.main",
+    "packageName": "delta.tellybiz",
     "name": "Tellybiz",
     "version": 1,
     "baseUrl": "https://tellybiz.in",
-    "description": "Full SkyStream plugin for tellybiz.in with loanid.php → loanagreement.php redirect bypass and direct m3u8/mp4 extraction.",
+    "description": "Full SkyStream plugin for tellybiz.in — scrapes homepage sections, supports search, extracts metadata from detail pages, bypasses the 5-second loanid.php → loanagreement.php redirect chain, and resolves final m3u8 / mp4 / iframe streams.",
     "authors": [
-      "Grok-9000"
+      "Principal Engineer"
     ],
     "languages": [
       "en",
@@ -16,6 +16,6 @@
       "Movie",
       "TvSeries"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/tellybiz.main.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/delta.tellybiz.sky"
   }
 ]
