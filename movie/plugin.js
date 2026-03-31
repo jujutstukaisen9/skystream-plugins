@@ -1,8 +1,8 @@
 (function () {
   /**
    * 5Movierulz SkyStream Gen 2 Plugin
-   * Scrapes movies from 5movierulz.army
-   * Implements: getHome, search, load, loadStreams
+   * Full streaming support: Embed extraction, packed JS unpacking,
+   * torrent/magnet fallback, multiple audio track support
    */
 
   const UA =
@@ -12,13 +12,16 @@
     return (manifest && manifest.baseUrl) || "https://www.5movierulz.army";
   }
 
-  function getHeaders() {
-    return {
-      "User-Agent": UA,
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      Referer: getBaseUrl() + "/",
-    };
+  function getHeaders(extra) {
+    return Object.assign(
+      {
+        "User-Agent": UA,
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Referer: getBaseUrl() + "/",
+      },
+      extra || {}
+    );
   }
 
   // ─── URL Helpers ───────────────────────────────────────────────
@@ -33,6 +36,14 @@
     return (base || getBaseUrl()) + "/" + raw;
   }
 
+  function getOrigin(url) {
+    try {
+      return new URL(url).origin;
+    } catch (_) {
+      return "";
+    }
+  }
+
   // ─── Text Helpers ─────────────────────────────────────────────
 
   function htmlDecode(text) {
@@ -44,10 +55,7 @@
       .replace(/&apos;/g, "'")
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
-      .replace(
-        /&#(\d+);/g,
-        (_, code) => String.fromCharCode(parseInt(code, 10))
-      );
+      .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(parseInt(c, 10)));
   }
 
   function textOf(el) {
@@ -85,11 +93,41 @@
     return out;
   }
 
+  function extractQuality(text) {
+    if (!text) return "";
+    const t = text.toLowerCase();
+    if (t.includes("2160") || t.includes("4k")) return "4K";
+    if (t.includes("1080")) return "1080p";
+    if (t.includes("720")) return "720p";
+    if (t.includes("480")) return "480p";
+    if (t.includes("360")) return "360p";
+    if (t.includes("hdrip")) return "HDRip";
+    if (t.includes("dvdscr")) return "DVDScr";
+    if (t.includes("brrip")) return "BRRip";
+    return "";
+  }
+
+  function extractLanguage(text) {
+    if (!text) return "";
+    const t = text.toLowerCase();
+    if (t.includes("telugu")) return "Telugu";
+    if (t.includes("tamil")) return "Tamil";
+    if (t.includes("hindi")) return "Hindi";
+    if (t.includes("malayalam")) return "Malayalam";
+    if (t.includes("kannada")) return "Kannada";
+    if (t.includes("bengali")) return "Bengali";
+    if (t.includes("english")) return "English";
+    if (t.includes("punjabi")) return "Punjabi";
+    if (t.includes("dual audio") || t.includes("multi audio"))
+      return "Multi Audio";
+    return "";
+  }
+
   // ─── HTTP Helpers ─────────────────────────────────────────────
 
   async function request(url, headers) {
     return http_get(url, {
-      headers: Object.assign({}, getHeaders(), headers || {}),
+      headers: getHeaders(headers),
     });
   }
 
@@ -103,19 +141,215 @@
     return res.body || "";
   }
 
+  // ─── Dean Edwards Packer Unpacker ─────────────────────────────
+  // StreamWish/hgcloud and FileLions/minochinos use this obfuscation
+
+  function itoaBase(num, radix) {
+    const digits =
+      "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    if (num === 0) return "0";
+    let result = "";
+    while (num > 0) {
+      result = digits[num % radix] + result;
+      num = Math.floor(num / radix);
+    }
+    return result;
+  }
+
+  function unpackAll(html) {
+    const results = [];
+    const regex =
+      /eval\(function\(p,a,c,k,e,(?:d|r)\)\{[^}]*\}\('((?:[^'\\]|\\.)*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']*)'/g;
+    let m;
+    while ((m = regex.exec(html)) !== null) {
+      try {
+        let p = m[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+        const a = parseInt(m[2], 10);
+        let c = parseInt(m[3], 10);
+        const k = m[4].split("|");
+
+        while (c--) {
+          if (k[c]) {
+            const encoded = itoaBase(c, a);
+            p = p.replace(
+              new RegExp("\\b" + encoded + "\\b", "g"),
+              k[c]
+            );
+          }
+        }
+        results.push(p);
+      } catch (_) {
+        // skip broken block
+      }
+    }
+    return results;
+  }
+
+  // ─── Video URL extraction from text ───────────────────────────
+
+  function extractVideoUrlsFromText(text) {
+    const urls = [];
+    const seen = new Set();
+    if (!text) return urls;
+
+    function addUrl(u) {
+      u = u.replace(/\\\//g, "/");
+      if (!seen.has(u) && u.startsWith("http")) {
+        seen.add(u);
+        urls.push(u);
+      }
+    }
+
+    // JWPlayer file patterns
+    const patterns = [
+      /file\s*:\s*"(https?:\/\/[^"]+)"/gi,
+      /file\s*:\s*'(https?:\/\/[^']+)'/gi,
+      /sources\s*:\s*\[\s*\{\s*file\s*:\s*"(https?:\/\/[^"]+)"/gi,
+      /sources\s*:\s*\[\s*\{\s*file\s*:\s*'(https?:\/\/[^']+)'/gi,
+      /src\s*:\s*"(https?:\/\/[^"]+\.(?:m3u8|mp4)[^"]*)"/gi,
+      /src\s*:\s*'(https?:\/\/[^']+\.(?:m3u8|mp4)[^']*)'/gi,
+      /source\s*:\s*"(https?:\/\/[^"]+\.(?:m3u8|mp4)[^"]*)"/gi,
+    ];
+
+    for (const pat of patterns) {
+      let match;
+      while ((match = pat.exec(text)) !== null) {
+        addUrl(match[1]);
+      }
+    }
+
+    // Direct m3u8/mp4
+    const directPat =
+      /https?:\/\/[^\s"'<>\\]+\.(?:m3u8|mp4)(?:\?[^\s"'<>\\]*)?/gi;
+    let dm;
+    while ((dm = directPat.exec(text)) !== null) {
+      addUrl(dm[0]);
+    }
+
+    // Unpacked links object: "hls2":"url", "hls3":"url", etc.
+    const hlsPat =
+      /"(?:hls[234]?|1f|16|1a)"\s*:\s*"((?:https?:\/)?\/[^"]+\.(?:m3u8|mp4|6t|6z)[^"]*)"/gi;
+    let hm;
+    while ((hm = hlsPat.exec(text)) !== null) {
+      let u = hm[1].replace(/\\\//g, "/");
+      if (u.startsWith("/")) continue; // relative path, skip
+      addUrl(u);
+    }
+
+    return urls;
+  }
+
+  // ─── Torrent / Magnet link extraction ─────────────────────────
+
+  function extractTorrentLinks(doc, rawBody) {
+    const torrents = [];
+    const seen = new Set();
+
+    // 1. Magnet links
+    const magnetLinks = rawBody.match(/magnet:\?xt=[^\s"'<>]+/gi) || [];
+    for (const mag of magnetLinks) {
+      if (!seen.has(mag)) {
+        seen.add(mag);
+        let name = "Torrent";
+        const dnMatch = mag.match(/dn=([^&]+)/);
+        if (dnMatch) {
+          name = decodeURIComponent(dnMatch[1].replace(/\+/g, " "));
+        }
+        torrents.push({
+          url: mag,
+          name: name,
+          type: "torrent",
+        });
+      }
+    }
+
+    // 2. .torrent file links
+    const allAnchors = Array.from(doc.querySelectorAll("a[href]"));
+    for (const a of allAnchors) {
+      const href = getAttr(a, "href");
+      if (!href) continue;
+
+      if (href.startsWith("magnet:")) {
+        if (!seen.has(href)) {
+          seen.add(href);
+          torrents.push({
+            url: href,
+            name: textOf(a) || "Magnet Link",
+            type: "torrent",
+          });
+        }
+      } else if (href.endsWith(".torrent") || href.includes("/torrent/")) {
+        if (!seen.has(href)) {
+          seen.add(href);
+          torrents.push({
+            url: normalizeUrl(href),
+            name: textOf(a) || "Torrent File",
+            type: "torrent",
+          });
+        }
+      }
+    }
+
+    // 3. Magnet links hidden in onclick or data attributes
+    const magnetInAttrs =
+      rawBody.match(
+        /(?:href|onclick|data-url)\s*=\s*["'](magnet:\?xt=[^"']+)/gi
+      ) || [];
+    for (const m of magnetInAttrs) {
+      const urlMatch = m.match(/(magnet:\?xt=[^"']+)/);
+      if (urlMatch && !seen.has(urlMatch[1])) {
+        seen.add(urlMatch[1]);
+        torrents.push({
+          url: urlMatch[1],
+          name: "Magnet",
+          type: "torrent",
+        });
+      }
+    }
+
+    return torrents;
+  }
+
+  // ─── Multi-audio section detection ────────────────────────────
+
+  function detectAudioSections(doc, rawBody) {
+    const sections = [];
+    // Look for headings that indicate audio/language sections
+    // e.g., "Watch Online – Telugu", "Watch Online – Hindi Dubbed"
+    const headings = Array.from(
+      doc.querySelectorAll("h2, h3, h4, h5, strong, b")
+    );
+    let currentLang = "";
+    let currentQuality = "";
+
+    for (const h of headings) {
+      const text = textOf(h);
+      if (!text) continue;
+
+      const langMatch = text.match(
+        /(?:single\s*links?|watch\s*online)\s*[-–—(]\s*([^)]+)/i
+      );
+      if (langMatch) {
+        const info = langMatch[1].trim();
+        currentQuality = extractQuality(info) || currentQuality;
+        currentLang = extractLanguage(text) || currentLang;
+      }
+
+      // Detect multi-audio indicators
+      if (
+        /multi\s*audio|dual\s*audio|(?:telugu|hindi|tamil)\s*(?:&|and)\s*(?:telugu|hindi|tamil)/i.test(
+          text
+        )
+      ) {
+        currentLang = "Multi Audio";
+      }
+    }
+
+    return { language: currentLang, quality: currentQuality };
+  }
+
   // ─── Parsing: Homepage / Category / Search listing ────────────
 
-  /**
-   * The site uses:
-   *   <li>
-   *     <div class="boxed film">
-   *       <div class="cont_display">
-   *         <a title="..." href="..."><img src="..." alt="..."></a>
-   *       </div>
-   *       <p><b>Title text</b></p>
-   *     </div>
-   *   </li>
-   */
   function parseBoxedFilm(card) {
     if (!card) return null;
     const a = card.querySelector("a[href]");
@@ -123,7 +357,6 @@
     const href = normalizeUrl(getAttr(a, "href"));
     if (!href || href === getBaseUrl() + "/" || href === getBaseUrl())
       return null;
-    // Skip menu / non-movie links
     if (
       href.includes("/category/") ||
       href.includes("/language/") ||
@@ -146,7 +379,9 @@
       getAttr(img, "src", "data-src", "data-lazy-src")
     );
     const type =
-      /series|season|episode/i.test(href + " " + title) ? "series" : "movie";
+      /series|season|episode/i.test(href + " " + title)
+        ? "series"
+        : "movie";
 
     return new MultimediaItem({
       title,
@@ -158,22 +393,13 @@
     });
   }
 
-  /**
-   * Collect movie items from a page document.
-   * Primary selector: .boxed.film (the exact structure used on 5movierulz).
-   * Falls back to broader selectors if needed.
-   */
   function collectItems(doc) {
     let found = [];
-
-    // Primary: .boxed.film cards
     const boxedCards = Array.from(doc.querySelectorAll(".boxed.film"));
     for (const card of boxedCards) {
       const item = parseBoxedFilm(card);
       if (item) found.push(item);
     }
-
-    // Fallback: li elements that contain an anchor with a movie href
     if (found.length < 3) {
       const lis = Array.from(
         doc.querySelectorAll("#list li, .content li, .films li")
@@ -183,7 +409,6 @@
         if (item) found.push(item);
       }
     }
-
     return uniqueByUrl(found);
   }
 
@@ -204,7 +429,6 @@
       ];
 
       const homeData = {};
-
       for (const section of sections) {
         try {
           const url = section.path ? base + section.path : base;
@@ -215,13 +439,12 @@
           }
         } catch (err) {
           console.error(
-            "[5Movierulz] Error loading section " + section.name + ":",
+            "[5Movierulz] getHome section error " + section.name,
             err
           );
           homeData[section.name] = [];
         }
       }
-
       cb({ success: true, data: homeData });
     } catch (e) {
       cb({
@@ -238,13 +461,10 @@
     try {
       const raw = String(query || "").trim();
       if (!raw) return cb({ success: true, data: [] });
-
       const q = encodeURIComponent(raw);
-      // The site uses GET /search_movies?s=QUERY
       const searchUrl = getBaseUrl() + "/search_movies?s=" + q;
       const doc = await loadDoc(searchUrl);
       const items = collectItems(doc);
-
       cb({ success: true, data: uniqueByUrl(items).slice(0, 40) });
     } catch (e) {
       cb({
@@ -257,22 +477,12 @@
 
   // ─── load (movie detail page) ─────────────────────────────────
 
-  /**
-   * The movie detail page has:
-   *  - <h2 class="entry-title">Title</h2>
-   *  - og:image meta for poster
-   *  - og:description meta for description
-   *  - A JS block: var locations = ["url1","url2",...];
-   *  - Stream links as <a> tags with hostnames like streamlare, uperbox, streamwish, filelions, etc.
-   *
-   * For `load`, we store the movie page URL itself in the episode URL.
-   * The `loadStreams` function will re-fetch the page and extract streams.
-   */
   async function load(url, cb) {
     try {
       const target = normalizeUrl(url);
-      const doc = await loadDoc(target);
-      const rawBody = doc.body?.innerHTML || "";
+      const res = await request(target);
+      const rawBody = res.body || "";
+      const doc = await parseHtml(rawBody);
 
       // Title
       const title = cleanTitle(
@@ -292,7 +502,9 @@
           "content"
         ) ||
           getAttr(
-            doc.querySelector("article img, .entry-content img, #post img"),
+            doc.querySelector(
+              "article img, .entry-content img, #post img"
+            ),
             "src",
             "data-src"
           )
@@ -312,8 +524,27 @@
           : "movie";
       const year = parseYear(title + " " + description);
 
-      // Extract stream links from the detail page to store in episodes
-      const streamData = extractStreamDataFromPage(doc, rawBody, target);
+      // Detect language/quality from page content
+      const audioInfo = detectAudioSections(doc, rawBody);
+
+      // Extract ALL stream sources
+      const streamData = extractStreamDataFromPage(
+        doc,
+        rawBody,
+        target
+      );
+
+      // Extract torrent links
+      const torrentData = extractTorrentLinks(doc, rawBody);
+
+      // Combine: streams first, then torrents as fallback
+      const allData = {
+        streams: streamData,
+        torrents: torrentData,
+        pageUrl: target,
+        language: audioInfo.language,
+        quality: audioInfo.quality || extractQuality(title),
+      };
 
       const item = new MultimediaItem({
         title,
@@ -327,7 +558,7 @@
         episodes: [
           new Episode({
             name: title,
-            url: JSON.stringify(streamData),
+            url: JSON.stringify(allData),
             season: 1,
             episode: 1,
             posterUrl,
@@ -345,114 +576,92 @@
     }
   }
 
-  // ─── Stream extraction helpers ────────────────────────────────
+  // ─── Stream data extraction from movie page ───────────────────
 
-  /**
-   * Extract all stream sources from a movie detail page.
-   * Returns an array of {url, name} objects.
-   *
-   * Sources:
-   * 1. `var locations = [...]` JS array (primary player embeds)
-   * 2. <a> tags linking to known hosts (streamlare, streamwish, filelions, etc.)
-   * 3. <iframe> sources
-   */
   function extractStreamDataFromPage(doc, rawBody, pageUrl) {
     const streams = [];
     const seen = new Set();
 
-    function addStream(url, name) {
+    function addStream(url, name, extra) {
       if (!url || seen.has(url)) return;
-      // Skip internal site links
       const base = getBaseUrl();
       if (url.startsWith(base) && !url.includes("video")) return;
       if (url === "#" || url.endsWith("#")) return;
       seen.add(url);
-      streams.push({ url, name: name || guessHostName(url) });
+      streams.push(
+        Object.assign({ url, name: name || guessHostName(url) }, extra || {})
+      );
     }
 
-    // 1. Extract from var locations = [...] in JavaScript
+    // 1. var locations = [...] (primary embedded players)
     const locMatch = rawBody.match(
       /var\s+locations\s*=\s*\[([\s\S]*?)\]/i
     );
     if (locMatch) {
-      const locContent = locMatch[1];
-      // Extract quoted strings, handling escaped slashes
-      const urlMatches = locContent.match(/"([^"]+)"/g) || [];
+      const urlMatches = locMatch[1].match(/"([^"]+)"/g) || [];
       urlMatches.forEach((m, idx) => {
-        let u = m.replace(/^"|"$/g, "");
-        u = u.replace(/\\\//g, "/");
-        addStream(u, "Player " + (idx + 1));
+        let u = m.replace(/^"|"$/g, "").replace(/\\\//g, "/");
+        addStream(u, "Player " + (idx + 1), { priority: 1 });
       });
     }
 
-    // 2. Extract <a> tags linking to known video hosts
+    // 2. Known host links
     const knownHosts = [
-      "streamlare",
-      "uperbox",
-      "easysyncr",
-      "streamwish",
-      "filelions",
-      "streamvin",
-      "vcdnlare",
-      "streamtape",
-      "doodstream",
-      "mixdrop",
-      "upstream",
-      "vtube",
-      "vidoza",
-      "supervideo",
-      "fembed",
-      "gdplayer",
-      "embedsito",
-      "watchfree",
-      "123onlinewatch",
-      "hubcloud",
-      "gdflix",
-      "gdlink",
+      "streamlare", "uperbox", "easysyncr", "streamwish",
+      "filelions", "streamvin", "vcdnlare", "streamtape",
+      "doodstream", "mixdrop", "upstream", "vtube", "vidoza",
+      "supervideo", "fembed", "gdplayer", "embedsito",
+      "watchfree", "123onlinewatch", "hubcloud", "gdflix",
+      "gdlink", "hgcloud", "minochinos", "huntrexus",
+      "vidhide", "streamruby", "embedwish", "wishembed",
+      "strwish", "swdyu", "sfastwish", "flaswish",
     ];
 
     const allAnchors = Array.from(doc.querySelectorAll("a[href]"));
     for (const a of allAnchors) {
       const href = getAttr(a, "href");
       if (!href || !href.startsWith("http")) continue;
-
       const hrefLower = href.toLowerCase();
       const isKnownHost = knownHosts.some((h) => hrefLower.includes(h));
       if (isKnownHost) {
         const linkText = textOf(a) || "";
-        // Try to extract host name from link text
         let name = "";
         const dashMatch = linkText.match(
-          /(?:watch\s*online|download)\s*[-–—]\s*(.+)/i
+          /(?:watch\s*online|download)\s*[-\u2013\u2014]\s*(.+)/i
         );
         if (dashMatch) {
           name = dashMatch[1].trim();
         } else {
           name = guessHostName(href);
         }
-        addStream(href, name);
+        // Detect language from nearby text
+        const parentText = textOf(a.parentElement) || "";
+        const lang = extractLanguage(parentText + " " + linkText);
+        addStream(href, name, { language: lang, priority: 2 });
       }
     }
 
-    // 3. Extract from mv_button_css links (download/watch buttons)
+    // 3. mv_button_css links
     const buttons = Array.from(doc.querySelectorAll("a.mv_button_css"));
     for (const btn of buttons) {
       const href = getAttr(btn, "href");
       if (href && href.startsWith("http")) {
-        addStream(href, textOf(btn) || guessHostName(href));
+        addStream(href, textOf(btn) || guessHostName(href), {
+          priority: 2,
+        });
       }
     }
 
-    // 4. Extract iframe sources
+    // 4. iframe sources
     const iframes = Array.from(doc.querySelectorAll("iframe[src]"));
     for (const iframe of iframes) {
       const src = getAttr(iframe, "src");
       if (src && src.startsWith("http")) {
-        addStream(src, "Embedded Player");
+        addStream(src, "Embedded Player", { priority: 1 });
       }
     }
 
-    // 5. Fallback: look for any external links in the article content
+    // 5. Fallback: external links in article
     if (streams.length === 0) {
       const articleLinks = Array.from(
         doc.querySelectorAll(
@@ -464,15 +673,22 @@
         if (!href || !href.startsWith("http")) continue;
         const base = getBaseUrl();
         if (href.startsWith(base)) continue;
-        if (href.includes("google") || href.includes("facebook")) continue;
-        addStream(href, textOf(a) || guessHostName(href));
+        if (href.includes("google") || href.includes("facebook"))
+          continue;
+        addStream(href, textOf(a) || guessHostName(href), {
+          priority: 3,
+        });
       }
     }
 
-    // If still nothing, store the page URL itself so loadStreams can re-fetch
     if (streams.length === 0) {
       streams.push({ url: pageUrl, name: "Page", isPageUrl: true });
     }
+
+    // Sort by priority (lower = better)
+    streams.sort(
+      (a, b) => (a.priority || 99) - (b.priority || 99)
+    );
 
     return streams;
   }
@@ -494,48 +710,52 @@
 
   // ─── loadStreams ───────────────────────────────────────────────
 
-  /**
-   * loadStreams receives the episode URL which is a JSON-stringified array
-   * of {url, name} objects from the load() function.
-   *
-   * For each URL:
-   * - If it's an HLS/m3u8 link → direct stream
-   * - If it's an MP4 link → direct stream
-   * - If it's an embed player page (streamvin, vcdnlare, etc.) → fetch & extract
-   * - Otherwise → return as iframe/direct link
-   */
   async function loadStreams(url, cb) {
     try {
       const streams = [];
-      let urlsToProcess = [];
+      let payload;
 
-      // Parse the JSON array from episode URL
+      // Parse the JSON payload from episode URL
       try {
-        const parsed = JSON.parse(url);
-        if (Array.isArray(parsed)) {
-          urlsToProcess = parsed;
-        } else if (typeof parsed === "object" && parsed.url) {
-          urlsToProcess = [parsed];
-        } else {
-          urlsToProcess = [{ url: url, name: "Direct" }];
-        }
+        payload = JSON.parse(url);
       } catch (_) {
-        urlsToProcess = [{ url: url, name: "Direct" }];
+        payload = { streams: [{ url: url, name: "Direct" }], torrents: [] };
       }
 
-      for (const item of urlsToProcess) {
+      // Handle old format (array)
+      if (Array.isArray(payload)) {
+        payload = {
+          streams: payload,
+          torrents: [],
+        };
+      }
+
+      const streamItems = payload.streams || [];
+      const torrentItems = payload.torrents || [];
+      const pageUrl = payload.pageUrl || getBaseUrl();
+      const globalLang = payload.language || "";
+      const globalQuality = payload.quality || "";
+
+      // Process each stream source
+      for (const item of streamItems) {
         const streamUrl =
           typeof item === "string" ? item : item.url || "";
         const streamName =
           typeof item === "string" ? "Direct" : item.name || "Direct";
         const isPageUrl = item.isPageUrl === true;
+        const itemLang = item.language || globalLang;
 
         if (!streamUrl) continue;
 
+        const langSuffix = itemLang ? " [" + itemLang + "]" : "";
+        const qualSuffix = globalQuality
+          ? " [" + globalQuality + "]"
+          : "";
+
         try {
           if (isPageUrl) {
-            // Re-fetch the movie page and extract streams
-            const pageStreams = await extractStreamsFromMoviePage(streamUrl);
+            const pageStreams =
+              await extractStreamsFromMoviePage(streamUrl);
             streams.push(...pageStreams);
           } else if (
             streamUrl.includes(".m3u8") ||
@@ -544,9 +764,13 @@
             streams.push(
               new StreamResult({
                 url: streamUrl,
-                source: "5Movierulz - " + streamName + " (HLS)",
+                source:
+                  streamName +
+                  " (HLS)" +
+                  qualSuffix +
+                  langSuffix,
                 headers: {
-                  Referer: getBaseUrl() + "/",
+                  Referer: pageUrl,
                   "User-Agent": UA,
                 },
               })
@@ -555,77 +779,100 @@
             streams.push(
               new StreamResult({
                 url: streamUrl,
-                source: "5Movierulz - " + streamName + " (MP4)",
+                source:
+                  streamName +
+                  " (MP4)" +
+                  qualSuffix +
+                  langSuffix,
                 headers: {
-                  Referer: getBaseUrl() + "/",
+                  Referer: pageUrl,
                   "User-Agent": UA,
                 },
               })
             );
-          } else if (
-            streamUrl.includes("streamvin") ||
-            streamUrl.includes("vcdnlare")
-          ) {
-            // Try to extract actual stream from embed pages
+          } else {
+            // Try deep extraction from embed page
             const extracted = await extractFromEmbedPage(
               streamUrl,
-              streamName
-            );
-            streams.push(...extracted);
-          } else if (
-            streamUrl.includes("streamwish") ||
-            streamUrl.includes("filelions") ||
-            streamUrl.includes("streamtape") ||
-            streamUrl.includes("doodstream") ||
-            streamUrl.includes("mixdrop")
-          ) {
-            // These are known embed hosts - try extraction
-            const extracted = await extractFromEmbedPage(
-              streamUrl,
-              streamName
+              streamName,
+              itemLang,
+              globalQuality
             );
             if (extracted.length > 0) {
               streams.push(...extracted);
             } else {
-              // Fallback: return as iframe source
+              // Return as iframe/direct link
               streams.push(
                 new StreamResult({
                   url: streamUrl,
-                  source: "5Movierulz - " + streamName,
+                  source:
+                    streamName + qualSuffix + langSuffix,
                   headers: {
-                    Referer: getBaseUrl() + "/",
+                    Referer: pageUrl,
                     "User-Agent": UA,
                   },
                 })
               );
             }
-          } else {
-            // Generic: return as direct link
-            streams.push(
-              new StreamResult({
-                url: streamUrl,
-                source: "5Movierulz - " + streamName,
-                headers: {
-                  Referer: getBaseUrl() + "/",
-                  "User-Agent": UA,
-                },
-              })
-            );
           }
         } catch (err) {
           console.error(
-            "[5Movierulz] Error processing stream " + streamUrl + ":",
+            "[5Movierulz] Stream error " + streamUrl,
             err
           );
-          // Still add as fallback
           streams.push(
             new StreamResult({
               url: streamUrl,
-              source: "5Movierulz - " + streamName + " (Fallback)",
+              source:
+                streamName +
+                " (Fallback)" +
+                qualSuffix +
+                langSuffix,
               headers: {
-                Referer: getBaseUrl() + "/",
+                Referer: pageUrl,
                 "User-Agent": UA,
               },
+            })
+          );
+        }
+      }
+
+      // If NO working streams found, add torrent links as fallback
+      if (streams.length === 0 && torrentItems.length > 0) {
+        console.log(
+          "[5Movierulz] No streams found, falling back to " +
+            torrentItems.length +
+            " torrent links"
+        );
+        for (const t of torrentItems) {
+          streams.push(
+            new StreamResult({
+              url: t.url,
+              source:
+                "Torrent - " +
+                (t.name || "Magnet") +
+                (globalQuality
+                  ? " [" + globalQuality + "]"
+                  : ""),
+              headers: {},
+            })
+          );
+        }
+      }
+
+      // ALSO always add torrents as additional options
+      if (torrentItems.length > 0 && streams.length > 0) {
+        for (const t of torrentItems) {
+          streams.push(
+            new StreamResult({
+              url: t.url,
+              source:
+                "Torrent - " +
+                (t.name || "Magnet") +
+                (globalQuality
+                  ? " [" + globalQuality + "]"
+                  : ""),
+              headers: {},
             })
           );
         }
@@ -641,139 +888,304 @@
     }
   }
 
-  /**
-   * Re-fetch a movie page and extract all streams when the page URL was stored.
-   */
+  // ─── Re-fetch movie page for streams ──────────────────────────
+
   async function extractStreamsFromMoviePage(pageUrl) {
     const streams = [];
     try {
       const body = await fetchRawBody(pageUrl);
       const doc = await parseHtml(body);
-      const streamData = extractStreamDataFromPage(doc, body, pageUrl);
+      const streamData = extractStreamDataFromPage(
+        doc,
+        body,
+        pageUrl
+      );
 
       for (const item of streamData) {
-        if (item.isPageUrl) continue; // prevent infinite loop
-        if (item.url.includes(".m3u8") || item.url.includes("t=hls")) {
+        if (item.isPageUrl) continue;
+        if (
+          item.url.includes(".m3u8") ||
+          item.url.includes("t=hls")
+        ) {
           streams.push(
             new StreamResult({
               url: item.url,
-              source: "5Movierulz - " + item.name + " (HLS)",
+              source: item.name + " (HLS)",
               headers: { Referer: pageUrl, "User-Agent": UA },
             })
           );
         } else {
-          streams.push(
-            new StreamResult({
-              url: item.url,
-              source: "5Movierulz - " + item.name,
-              headers: { Referer: pageUrl, "User-Agent": UA },
-            })
+          const extracted = await extractFromEmbedPage(
+            item.url,
+            item.name,
+            "",
+            ""
           );
-        }
-      }
-    } catch (err) {
-      console.error("[5Movierulz] extractStreamsFromMoviePage error:", err);
-    }
-    return streams;
-  }
-
-  /**
-   * Try to extract a playable video URL from an embed page.
-   * Common patterns:
-   *  - file:"https://...m3u8" or source: [{file:"..."}]
-   *  - jwplayer(...).setup({sources:[{file:"..."}]})
-   *  - <source src="...">
-   *  - eval(function(p,a,c,k,e,d){...}) packed JS
-   */
-  async function extractFromEmbedPage(embedUrl, name) {
-    const streams = [];
-    try {
-      const body = await fetchRawBody(embedUrl, {
-        Referer: getBaseUrl() + "/",
-      });
-
-      // Pattern 1: file:"url" or file:'url'
-      const fileMatches =
-        body.match(/file\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)/gi) ||
-        [];
-      for (const fm of fileMatches) {
-        const urlMatch = fm.match(/["']([^"']+)/);
-        if (urlMatch) {
-          const u = urlMatch[1].replace(/\\\//g, "/");
-          streams.push(
-            new StreamResult({
-              url: u,
-              source:
-                "5Movierulz - " +
-                name +
-                (u.includes(".m3u8") ? " (HLS)" : " (MP4)"),
-              headers: { Referer: embedUrl, "User-Agent": UA },
-            })
-          );
-        }
-      }
-
-      // Pattern 2: sources:[{src:"url"...}] or sources:[{file:"url"...}]
-      if (streams.length === 0) {
-        const srcMatches =
-          body.match(
-            /(?:src|file)\s*[:=]\s*["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)/gi
-          ) || [];
-        for (const sm of srcMatches) {
-          const urlMatch = sm.match(/["'](https?:\/\/[^"']+)/);
-          if (urlMatch) {
-            const u = urlMatch[1].replace(/\\\//g, "/");
+          if (extracted.length > 0) {
+            streams.push(...extracted);
+          } else {
             streams.push(
               new StreamResult({
-                url: u,
-                source: "5Movierulz - " + name,
-                headers: { Referer: embedUrl, "User-Agent": UA },
+                url: item.url,
+                source: item.name,
+                headers: { Referer: pageUrl, "User-Agent": UA },
               })
             );
           }
         }
       }
 
-      // Pattern 3: <source src="...">
+      // Also try torrent fallback
       if (streams.length === 0) {
-        const doc = await parseHtml(body);
-        const sources = Array.from(doc.querySelectorAll("source[src]"));
+        const torrents = extractTorrentLinks(doc, body);
+        for (const t of torrents) {
+          streams.push(
+            new StreamResult({
+              url: t.url,
+              source: "Torrent - " + t.name,
+              headers: {},
+            })
+          );
+        }
+      }
+    } catch (err) {
+      console.error(
+        "[5Movierulz] extractStreamsFromMoviePage error:",
+        err
+      );
+    }
+    return streams;
+  }
+
+  // ─── Deep embed page extraction ───────────────────────────────
+
+  async function extractFromEmbedPage(
+    embedUrl,
+    name,
+    language,
+    quality
+  ) {
+    const streams = [];
+    const langSuffix = language ? " [" + language + "]" : "";
+    const qualSuffix = quality ? " [" + quality + "]" : "";
+
+    try {
+      let finalBody = await fetchRawBody(embedUrl, {
+        Referer: getBaseUrl() + "/",
+      });
+      let finalUrl = embedUrl;
+
+      // ─── Step 1: Follow redirects ───────────────────────
+      // StreamWish shows a loading page first
+      // Check for JS main.js redirect pattern
+      if (
+        finalBody.includes("loading-container") ||
+        finalBody.includes("Page is loading")
+      ) {
+        // Try to find redirect target in main.js or meta
+        const metaRefresh = finalBody.match(
+          /<meta[^>]*http-equiv\s*=\s*["']refresh["'][^>]*url=(https?:\/\/[^"'\s>]+)/i
+        );
+        if (metaRefresh) {
+          try {
+            finalBody = await fetchRawBody(metaRefresh[1], {
+              Referer: embedUrl,
+            });
+            finalUrl = metaRefresh[1];
+          } catch (_) {}
+        }
+
+        // Try fetching the same URL again (sometimes redirect resolves)
+        if (finalBody.includes("loading-container")) {
+          try {
+            const res2 = await request(embedUrl, {
+              Referer: embedUrl,
+            });
+            if (
+              res2.body &&
+              !res2.body.includes("loading-container")
+            ) {
+              finalBody = res2.body;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // ─── Step 2: Try /e/ or /embed/ variant ─────────────
+      const fileCodeMatch = embedUrl.match(
+        /\/(?:file|f|d|w|v)\/([a-zA-Z0-9]+)/
+      );
+      if (
+        fileCodeMatch &&
+        !finalBody.includes("jwplayer") &&
+        !finalBody.includes("eval(function")
+      ) {
+        const fileCode = fileCodeMatch[1];
+        const origin = getOrigin(embedUrl);
+        const variants = [
+          origin + "/e/" + fileCode,
+          origin + "/embed/" + fileCode,
+        ];
+        for (const variant of variants) {
+          try {
+            const vBody = await fetchRawBody(variant, {
+              Referer: embedUrl,
+            });
+            if (
+              vBody.includes("jwplayer") ||
+              vBody.includes("eval(function") ||
+              vBody.includes("file:")
+            ) {
+              finalBody = vBody;
+              finalUrl = variant;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // ─── Step 3: Try /video/ variant for streamvin ──────
+      if (
+        embedUrl.includes("streamvin") &&
+        !finalBody.includes("eval(function")
+      ) {
+        const vidMatch = embedUrl.match(
+          /\/video\/([a-zA-Z0-9]+)/
+        );
+        if (vidMatch) {
+          try {
+            const eUrl =
+              getOrigin(embedUrl) + "/e/" + vidMatch[1];
+            const eBody = await fetchRawBody(eUrl, {
+              Referer: embedUrl,
+            });
+            if (eBody.includes("eval(function") || eBody.includes("file:")) {
+              finalBody = eBody;
+              finalUrl = eUrl;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // ─── Step 4: Unpack eval(function(p,a,c,k...)) ─────
+      const unpackedBlocks = unpackAll(finalBody);
+      const allText =
+        unpackedBlocks.join("\n") + "\n" + finalBody;
+
+      const videoUrls = extractVideoUrlsFromText(allText);
+
+      for (const vu of videoUrls) {
+        const isHLS = vu.includes(".m3u8");
+        streams.push(
+          new StreamResult({
+            url: vu,
+            source:
+              name +
+              (isHLS ? " (HLS)" : " (MP4)") +
+              qualSuffix +
+              langSuffix,
+            headers: {
+              Referer: finalUrl,
+              Origin: getOrigin(finalUrl),
+              "User-Agent": UA,
+            },
+          })
+        );
+      }
+
+      // ─── Step 5: Download links ─────────────────────────
+      if (streams.length === 0) {
+        const doc = await parseHtml(finalBody);
+        const dlSelectors = [
+          'a[href*="/download/"]',
+          'a[href*="/f/"]',
+          "a.videoplayer-download",
+          'a.btn[href*="/d/"]',
+          'a.btn-gradient[href*="/download"]',
+        ];
+        for (const sel of dlSelectors) {
+          const dlLinks = Array.from(doc.querySelectorAll(sel));
+          for (const dl of dlLinks) {
+            let href = getAttr(dl, "href");
+            if (!href) continue;
+            if (href.startsWith("/")) {
+              href = getOrigin(finalUrl) + href;
+            }
+            if (href.startsWith("http")) {
+              streams.push(
+                new StreamResult({
+                  url: href,
+                  source:
+                    name +
+                    " (Download)" +
+                    qualSuffix +
+                    langSuffix,
+                  headers: {
+                    Referer: finalUrl,
+                    "User-Agent": UA,
+                  },
+                })
+              );
+            }
+          }
+        }
+      }
+
+      // ─── Step 6: <source> and <video> tags ──────────────
+      if (streams.length === 0) {
+        const doc = await parseHtml(finalBody);
+        const sources = Array.from(
+          doc.querySelectorAll("source[src], video[src]")
+        );
         for (const s of sources) {
           const src = getAttr(s, "src");
           if (src && src.startsWith("http")) {
             streams.push(
               new StreamResult({
                 url: src,
-                source: "5Movierulz - " + name,
-                headers: { Referer: embedUrl, "User-Agent": UA },
+                source: name + qualSuffix + langSuffix,
+                headers: {
+                  Referer: finalUrl,
+                  "User-Agent": UA,
+                },
               })
             );
           }
         }
       }
 
-      // Pattern 4: Generic URL extraction for m3u8/mp4
+      // ─── Step 7: Nested iframes ─────────────────────────
       if (streams.length === 0) {
-        const genericMatches =
-          body.match(/https?:\/\/[^\s"'<>]+\.(?:m3u8|mp4)[^\s"'<>]*/gi) ||
-          [];
-        const seen = new Set();
-        for (const gm of genericMatches) {
-          const clean = gm.replace(/\\\//g, "/").replace(/\\u002F/g, "/");
-          if (!seen.has(clean)) {
-            seen.add(clean);
-            streams.push(
-              new StreamResult({
-                url: clean,
-                source: "5Movierulz - " + name + " (Extracted)",
-                headers: { Referer: embedUrl, "User-Agent": UA },
-              })
-            );
+        const doc = await parseHtml(finalBody);
+        const nestedIframes = Array.from(
+          doc.querySelectorAll("iframe[src]")
+        );
+        for (const iframe of nestedIframes) {
+          const src = getAttr(iframe, "src");
+          if (
+            src &&
+            src.startsWith("http") &&
+            src !== embedUrl &&
+            src !== finalUrl
+          ) {
+            try {
+              const iframeStreams =
+                await extractFromEmbedPage(
+                  src,
+                  name + " (Nested)",
+                  language,
+                  quality
+                );
+              streams.push(...iframeStreams);
+            } catch (_) {}
           }
         }
       }
     } catch (err) {
-      console.error("[5Movierulz] extractFromEmbedPage error:", err);
+      console.error(
+        "[5Movierulz] extractFromEmbedPage error for " + embedUrl,
+        err
+      );
     }
     return streams;
   }
