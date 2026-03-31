@@ -1,6 +1,5 @@
-// skystream-plugins/tellybiz/plugin.json
 {
-  "packageName": "kai.delta.tellybiz",
+  "packageName": "tellybiz",
   "name": "TellyBiz",
   "version": 1,
   "baseUrl": "https://tellybiz.in",
