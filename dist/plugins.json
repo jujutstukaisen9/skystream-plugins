@@ -2,9 +2,9 @@
   {
     "packageName": "kai.delta.tellybiz",
     "name": "TellyBiz",
-    "version": 1,
+    "version": 2,
     "baseUrl": "https://tellybiz.in",
-    "description": "TellyBiz movie scraper with redirect bypass and stream resolution.",
+    "description": "TellyBiz movie scraper with homepage grid, search, metadata extraction, and loan redirect bypass.",
     "authors": [
       "kai"
     ],
