@@ -100,7 +100,7 @@
 
         const img = card.querySelector("img");
         const title = cleanTitle(
-            textOf(card.querySelector("h1, h2, h3, .title, .name, .movie-title, .entry-title")) ||
+            textOf(card.querySelector("p b, .title, .name, .movie-title, .entry-title")) ||
             getAttr(a, "title") ||
             getAttr(img, "alt", "title") ||
             textOf(a)
@@ -121,9 +121,8 @@
 
     function collectItems(doc) {
         const selectors = [
-            ".poster", ".movie-card", ".item", "article", ".thumb", ".grid-item", ".list-item",
-            ".swiper-slide", ".owl-item", ".movie-poster", ".card", ".post", ".entry", ".content-item",
-            "div[class*='poster']", "div[class*='movie']", "div[class*='card']", "div[class*='item']"
+            ".boxed.film", ".film", "li", "article", ".post", ".entry", ".content-item",
+            "div[class*='film']", "div[class*='movie']", "div[class*='card']", "div[class*='item']"
         ];
         let found = [];
         for (const sel of selectors) {
@@ -140,7 +139,7 @@
             for (const img of allImages) {
                 const a = img.closest("a");
                 if (!a) continue;
-                const card = a.closest("div, article, li") || a;
+                const card = a.closest("div, li, article") || a;
                 const item = parseListItem(card);
                 if (item) found.push(item);
             }
@@ -192,7 +191,7 @@
             if (!raw) return cb({ success: true, data: [] });
 
             const q = encodeURIComponent(raw);
-            const doc = await loadDoc(`\( {manifest.baseUrl}/?s= \){q}`);
+            const doc = await loadDoc(`\( {manifest.baseUrl}/search_movies?s= \){q}`);
             const items = collectItems(doc);
             cb({ success: true, data: uniqueByUrl(items).slice(0, 40) });
         } catch (e) {
@@ -263,10 +262,9 @@
 
             const candidates = [];
 
-            // Extract direct video links
-            const m3u8 = doc.querySelectorAll('a[href*=".m3u8"], source[src*=".m3u8"]');
-            const mp4 = doc.querySelectorAll('a[href*=".mp4"], source[src*=".mp4"]');
-            const iframes = Array.from(doc.querySelectorAll('iframe[src]')).map(i => getAttr(i, "src"));
+            const m3u8 = Array.from(doc.querySelectorAll('a[href*=".m3u8"], source[src*=".m3u8"], iframe[src*=".m3u8"]'));
+            const mp4 = Array.from(doc.querySelectorAll('a[href*=".mp4"], source[src*=".mp4"], iframe[src*=".mp4"]'));
+            const iframes = Array.from(doc.querySelectorAll('iframe[src]'));
 
             m3u8.forEach(el => {
                 const u = resolveUrl(pageUrl, getAttr(el, "href", "src"));
@@ -278,9 +276,9 @@
                 if (/\.mp4/i.test(u)) candidates.push({ url: u, type: "mp4" });
             });
 
-            iframes.forEach(src => {
-                const u = resolveUrl(pageUrl, src);
-                candidates.push({ url: u, type: "iframe" });
+            iframes.forEach(frame => {
+                const src = getAttr(frame, "src");
+                if (src) candidates.push({ url: resolveUrl(pageUrl, src), type: "iframe" });
             });
 
             const streams = candidates.map(cand => {
