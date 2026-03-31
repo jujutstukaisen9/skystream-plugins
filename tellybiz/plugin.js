@@ -93,8 +93,7 @@
 
     function parseListItem(card) {
         if (!card) return null;
-
-        const a = card.querySelector("a[href]") || card.querySelector("a");
+        const a = card.querySelector("a[href]");
         const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
         if (!href) return null;
         if (/\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/|loanid)/i.test(href)) return null;
@@ -124,7 +123,7 @@
         const selectors = [
             ".poster", ".movie-card", ".item", "article", ".thumb", ".grid-item", ".list-item",
             ".swiper-slide", ".owl-item", ".movie-poster", ".card", ".post", ".entry", ".content-item",
-            "div[class*='poster']", "div[class*='movie']", "div[class*='card']"
+            "div[class*='poster']", "div[class*='movie']", "div[class*='card']", "div[class*='item']"
         ];
         let found = [];
         for (const sel of selectors) {
@@ -136,7 +135,6 @@
             if (found.length >= 40) break;
         }
 
-        // LAST RESORT - any image inside an anchor (works on almost every piracy site)
         if (found.length < 10) {
             const allImages = Array.from(doc.querySelectorAll("a[href] img"));
             for (const img of allImages) {
@@ -263,25 +261,24 @@
             let items = collectItems(doc);
 
             if (items.length === 0) {
-                // FINAL RAW FALLBACK - works on any site that has posters
-                const rawAnchors = Array.from(doc.querySelectorAll("a[href] img")).map(img => {
+                const rawAnchors = Array.from(doc.querySelectorAll("a[href] img"));
+                for (const img of rawAnchors) {
                     const a = img.closest("a");
-                    if (!a) return null;
+                    if (!a) continue;
                     const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
                     const title = cleanTitle(getAttr(img, "alt") || textOf(a) || getAttr(a, "title"));
                     const poster = normalizeUrl(getAttr(img, "src", "data-src", "data-lazy-src"), manifest.baseUrl);
                     if (title && href && poster) {
-                        return new MultimediaItem({
+                        items.push(new MultimediaItem({
                             title,
                             url: href,
                             posterUrl: poster,
                             type: "movie",
                             contentType: "movie"
-                        });
+                        }));
                     }
-                    return null;
-                }).filter(Boolean);
-                items = uniqueByUrl(rawAnchors);
+                }
+                items = uniqueByUrl(items);
             }
 
             if (items.length > 0) {
