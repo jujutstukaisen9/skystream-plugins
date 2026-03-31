@@ -93,22 +93,23 @@
 
     function parseListItem(card) {
         if (!card) return null;
-        const a = card.querySelector("a[href]");
+
+        const a = card.querySelector("a[href]") || card.querySelector("a");
         const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
         if (!href) return null;
         if (/\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/|loanid)/i.test(href)) return null;
 
         const img = card.querySelector("img");
         const title = cleanTitle(
-            textOf(card.querySelector("h2, h3, .title, .name, .movie-title")) ||
+            textOf(card.querySelector("h1, h2, h3, .title, .name, .movie-title, .card-title, .post-title, .entry-title")) ||
             getAttr(a, "title") ||
-            getAttr(img, "alt") ||
+            getAttr(img, "alt", "title") ||
             textOf(a)
         );
         if (!title || title.length < 2) return null;
 
-        const posterUrl = normalizeUrl(getAttr(img, "data-src", "src", "data-original"), manifest.baseUrl);
-        const type = /series|season|episode|web-series/i.test(href + " " + title) ? "series" : "movie";
+        const posterUrl = normalizeUrl(getAttr(img, "data-src", "data-lazy-src", "src", "data-original", "data-lazy"), manifest.baseUrl);
+        const type = /series|season|episode|web-series|tv/i.test(href + " " + title) ? "series" : "movie";
 
         return new MultimediaItem({
             title,
@@ -122,7 +123,8 @@
     function collectItems(doc) {
         const selectors = [
             ".poster", ".movie-card", ".item", "article", ".thumb", ".grid-item", ".list-item",
-            ".swiper-slide", ".owl-item", ".movie-poster", ".card", ".post", ".entry"
+            ".swiper-slide", ".owl-item", ".movie-poster", ".card", ".post", ".entry", ".content-item",
+            "div[class*='poster']", "div[class*='movie']", "div[class*='card']"
         ];
         let found = [];
         for (const sel of selectors) {
@@ -133,6 +135,19 @@
             }
             if (found.length >= 40) break;
         }
+
+        // LAST RESORT - any image inside an anchor (works on almost every piracy site)
+        if (found.length < 10) {
+            const allImages = Array.from(doc.querySelectorAll("a[href] img"));
+            for (const img of allImages) {
+                const a = img.closest("a");
+                if (!a) continue;
+                const card = a.closest("div, article, li") || a;
+                const item = parseListItem(card);
+                if (item) found.push(item);
+            }
+        }
+
         return uniqueByUrl(found);
     }
 
@@ -205,7 +220,8 @@
 
         const m3u8Patterns = [
             /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/gi,
-            /["']((?:https?:)?\/\/[^"'\s]+?\.m3u8[^"'\s]*)["']/gi
+            /["']((?:https?:)?\/\/[^"'\s]+?\.m3u8[^"'\s]*)["']/gi,
+            /file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/gi
         ];
         for (const p of m3u8Patterns) {
             let m;
@@ -217,7 +233,8 @@
 
         const mp4Patterns = [
             /(https?:\/\/[^\s"']+\.mp4[^\s"']*)/gi,
-            /["']((?:https?:)?\/\/[^"'\s]+?\.mp4[^"'\s]*)["']/gi
+            /["']((?:https?:)?\/\/[^"'\s]+?\.mp4[^"'\s]*)["']/gi,
+            /source\s*[:=]\s*["']([^"']+\.mp4[^"']*)["']/gi
         ];
         for (const p of mp4Patterns) {
             let m;
@@ -230,6 +247,12 @@
         const iframeMatch = raw.match(/<iframe[^>]+src=["']([^"']+)["']/i);
         if (iframeMatch) candidates.push({ url: resolveUrl(baseUrl, iframeMatch[1]), type: "iframe" });
 
+        const sourceMatch = raw.match(/<source[^>]+src=["']([^"']+)["']/i);
+        if (sourceMatch) {
+            const u = resolveUrl(baseUrl, sourceMatch[1]);
+            candidates.push({ url: u, type: /\.(m3u8|mp4)/i.test(u) ? (/\.m3u8/i.test(u) ? "hls" : "mp4") : "direct" });
+        }
+
         return candidates;
     }
 
@@ -237,18 +260,17 @@
         try {
             const data = {};
             const doc = await loadDoc(manifest.baseUrl);
-            const items = collectItems(doc);
+            let items = collectItems(doc);
 
-            if (items.length > 0) {
-                data["Latest"] = uniqueByUrl(items).slice(0, 40);
-            } else {
+            if (items.length === 0) {
+                // FINAL RAW FALLBACK - works on any site that has posters
                 const rawAnchors = Array.from(doc.querySelectorAll("a[href] img")).map(img => {
-                    const a = img.closest("a") || img.parentElement;
+                    const a = img.closest("a");
                     if (!a) return null;
                     const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
-                    const title = cleanTitle(getAttr(img, "alt") || textOf(a));
-                    const poster = normalizeUrl(getAttr(img, "src", "data-src"), manifest.baseUrl);
-                    if (title && href) {
+                    const title = cleanTitle(getAttr(img, "alt") || textOf(a) || getAttr(a, "title"));
+                    const poster = normalizeUrl(getAttr(img, "src", "data-src", "data-lazy-src"), manifest.baseUrl);
+                    if (title && href && poster) {
                         return new MultimediaItem({
                             title,
                             url: href,
@@ -259,7 +281,11 @@
                     }
                     return null;
                 }).filter(Boolean);
-                if (rawAnchors.length > 0) data["Latest"] = uniqueByUrl(rawAnchors).slice(0, 40);
+                items = uniqueByUrl(rawAnchors);
+            }
+
+            if (items.length > 0) {
+                data["Latest"] = items.slice(0, 40);
             }
 
             cb({ success: true, data });
@@ -288,7 +314,7 @@
             const doc = await loadDoc(target);
 
             const title = cleanTitle(
-                textOf(doc.querySelector("h1")) ||
+                textOf(doc.querySelector("h1, .title, .movie-title")) ||
                 getAttr(doc.querySelector('meta[property="og:title"]'), "content") ||
                 "Unknown"
             );
