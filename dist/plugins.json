@@ -1,10 +1,10 @@
 [
   {
-    "packageName": "tellybiz",
+    "packageName": "kai.delta.tellybiz",
     "name": "TellyBiz",
     "version": 1,
     "baseUrl": "https://tellybiz.in",
-    "description": "TellyBiz scraper with homepage sections, search, metadata extraction, loan redirect bypass, and final stream resolution.",
+    "description": "TellyBiz movie scraper with redirect bypass and stream resolution.",
     "authors": [
       "kai"
     ],
@@ -16,6 +16,6 @@
     "categories": [
       "Movie"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/tellybiz.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/kai.delta.tellybiz.sky"
   }
 ]
