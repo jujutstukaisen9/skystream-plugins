@@ -419,13 +419,13 @@
       const base = getBaseUrl();
       const sections = [
         { name: "Latest", path: "" },
-        { name: "Featured", path: "/movies?sort=featured" },
-        { name: "Bollywood", path: "/category/bollywood-featured" },
-        { name: "Telugu", path: "/category/telugu-featured" },
-        { name: "Tamil", path: "/category/tamil-featured" },
-        { name: "Malayalam", path: "/category/malayalam-featured" },
+        { name: "Telugu 2026", path: "/category/telugu-featured" },
+        { name: "Telugu-2", path: "/category/telugu-featured/page/2" },
+        { name: "telugu-3", path: "/category/telugu-featured/page/3" },
+        { name: "Dubbed", path: "/language/telugu-dubbed" },
+        { name: "Dubbed2", path: "/language/telugu-dubbed/page/2" },
         { name: "Hollywood", path: "/category/hollywood-featured" },
-        { name: "Hindi Dubbed", path: "/language/hindi-dubbed" },
+        { name: "Telugu 2025", path: "/category/telugu-movies-2025" },
       ];
 
       const homeData = {};
