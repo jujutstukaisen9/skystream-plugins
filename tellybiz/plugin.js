@@ -1,20 +1,20 @@
 (function () {
-  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
-  const BASE_HEADERS = {
+  var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
+  var BASE_HEADERS = {
     "User-Agent": UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Referer": `${manifest.baseUrl}/`
+    "Referer": manifest.baseUrl + "/"
   };
 
   function normalizeUrl(url, base) {
     if (!url) return "";
-    const raw = String(url).trim();
+    var raw = String(url).trim();
     if (!raw) return "";
-    if (raw.startsWith("//")) return `https:${raw}`;
+    if (raw.startsWith("//")) return "https:" + raw;
     if (/^https?:\/\//i.test(raw)) return raw;
-    const root = String(base || manifest.baseUrl).replace(/\/+$/, "");
-    if (raw.startsWith("/")) return `${root}${raw}`;
-    return `${root}/${raw.replace(/^\/+/, "")}`;
+    var root = String(base || manifest.baseUrl).replace(/\/+$/, "");
+    if (raw.startsWith("/")) return root + raw;
+    return root + "/" + raw.replace(/^\/+/, "");
   }
 
   function resolveUrl(base, next) {
@@ -34,18 +34,21 @@
       .replace(/&apos;/g, "'")
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
-      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+      .replace(/&#(\d+);/g, function (_, n) {
+        return String.fromCharCode(parseInt(n, 10));
+      });
   }
 
   function safeText(el) {
-    return htmlDecode((el?.textContent || "").replace(/\s+/g, " ").trim());
+    if (!el) return "";
+    return htmlDecode((el.textContent || "").replace(/\s+/g, " ").trim());
   }
 
-  function getAttr(el, ...attrs) {
+  function getAttr(el) {
     if (!el) return "";
-    for (const attr of attrs) {
-      const val = el.getAttribute(attr);
-      if (val && String(val).trim()) return String(val).trim();
+    for (var i = 1; i < arguments.length; i++) {
+      var v = el.getAttribute(arguments[i]);
+      if (v && String(v).trim()) return String(v).trim();
     }
     return "";
   }
@@ -55,384 +58,492 @@
   }
 
   function parseYear(text) {
-    const m = String(text || "").match(/\b(19\d{2}|20\d{2})\b/);
+    var m = String(text || "").match(/\b(19\d{2}|20\d{2})\b/);
     return m ? parseInt(m[1], 10) : undefined;
   }
 
-  function parseScore(text) {
-    const m = String(text || "").match(/★?\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
-    return m ? parseFloat(m[1]) : undefined;
-  }
-
   function extractQuality(text) {
-    const t = String(text || "").toLowerCase();
-    if (t.includes("2160") || t.includes("4k")) return "4K";
-    if (t.includes("1080")) return "1080p";
-    if (t.includes("720")) return "720p";
-    if (t.includes("480")) return "480p";
-    if (t.includes("360")) return "360p";
-    if (t.includes("700mb")) return "700MB";
-    if (t.includes("mp4")) return "MP4";
+    var t = String(text || "").toLowerCase();
+    if (t.indexOf("2160") > -1 || t.indexOf("4k") > -1) return "4K";
+    if (t.indexOf("1080") > -1) return "1080p";
+    if (t.indexOf("720") > -1) return "720p";
+    if (t.indexOf("480") > -1) return "480p";
+    if (t.indexOf("360") > -1) return "360p";
+    if (t.indexOf("700mb") > -1 || t.indexOf("700 mb") > -1) return "700MB";
     return "Auto";
   }
 
-  function uniqueByUrl(items) {
-    const out = [];
-    const seen = new Set();
-    for (const item of items || []) {
-      const key = String(item?.url || "");
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(item);
-    }
-    return out;
-  }
-
-  async function request(url, headers = {}) {
+  function request(url, headers) {
     return http_get(url, {
-      headers: Object.assign({}, BASE_HEADERS, headers)
+      headers: Object.assign({}, BASE_HEADERS, headers || {})
     });
   }
 
-  async function loadDoc(url, headers = {}) {
-    const res = await request(url, headers);
-    return parseHtml(res?.body || "");
-  }
+  function parseMovieCards(doc) {
+    var cards = Array.from(doc.querySelectorAll("a.movie-card"));
+    var items = [];
+    var seen = {};
 
-  function parseCard(a) {
-    if (!a) return null;
-    const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
-    if (!href) return null;
-    if (/\/(loanid|loanagreement|wp-|tag\/|category\/|feed\/)/i.test(href)) return null;
+    for (var i = 0; i < cards.length; i++) {
+      var a = cards[i];
+      var href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
+      if (!href || seen[href]) continue;
 
-    const img = a.querySelector("img") || a.parentElement?.querySelector?.("img");
-    const title =
-      cleanTitle(getAttr(img, "alt")) ||
-      cleanTitle(getAttr(a, "title")) ||
-      cleanTitle(safeText(a.querySelector("h1, h2, h3, h4, .title, .movie-title"))) ||
-      cleanTitle(safeText(a));
+      var img = a.querySelector("img.movie-poster") || a.querySelector("img");
+      var titleEl = a.querySelector("h3.movie-title") || a.querySelector(".movie-title") || a.querySelector("h3");
+      var yearEl = a.querySelector(".movie-year");
+      var ratingEl = a.querySelector(".rating-badge");
 
-    const posterUrl = normalizeUrl(getAttr(img, "data-src", "src"), manifest.baseUrl);
-    if (!title || !posterUrl) return null;
+      var title = cleanTitle(safeText(titleEl));
+      if (!title) title = cleanTitle(getAttr(img, "alt"));
+      if (!title) continue;
 
-    return new MultimediaItem({
-      title,
-      url: href,
-      posterUrl,
-      type: "movie",
-      contentType: "movie"
-    });
-  }
+      var posterUrl = getAttr(img, "src", "data-src") || "";
+      var year = parseYear(safeText(yearEl));
 
-  function collectItems(doc) {
-    const anchors = Array.from(doc.querySelectorAll("a[href]"));
-    const items = [];
-    for (const a of anchors) {
-      const item = parseCard(a);
-      if (item) items.push(item);
+      seen[href] = true;
+      items.push(new MultimediaItem({
+        title: title,
+        url: href,
+        posterUrl: posterUrl,
+        type: "movie",
+        contentType: "movie"
+      }));
     }
-    return uniqueByUrl(items);
+    return items;
   }
 
-  function extractLoanLinksFromHtml(html, baseUrl) {
-    const text = String(html || "");
-    const out = [];
-    const patterns = [
-      /data-href\s*=\s*["']([^"']*loanagreement\.php\?[^"']+)["']/gi,
-      /href\s*=\s*["']([^"']*loanagreement\.php\?[^"']+)["']/gi,
-      /data-href\s*=\s*["']([^"']*loanid\.php\?[^"']+)["']/gi,
-      /href\s*=\s*["']([^"']*loanid\.php\?[^"']+)["']/gi,
-      /["']((?:\/|https?:\/\/)[^"'<>]*loanagreement\.php\?[^"'<>]+)["']/gi,
-      /["']((?:\/|https?:\/\/)[^"'<>]*loanid\.php\?[^"'<>]+)["']/gi
-    ];
-    for (const rx of patterns) {
-      let m;
-      while ((m = rx.exec(text)) !== null) {
-        const u = resolveUrl(baseUrl || manifest.baseUrl, m[1]);
-        if (u) out.push(u);
-      }
-    }
-    return Array.from(new Set(out));
+  function extractRedirectFromHtml(html, currentUrl) {
+    var text = String(html || "");
+    var m;
+
+    m = text.match(/<meta[^>]+http-equiv\s*=\s*["']refresh["'][^>]+content\s*=\s*["']\d+;\s*url=([^"'>]+)["']/i);
+    if (!m) m = text.match(/content\s*=\s*["']\d+;\s*url=([^"'>]+)["'][^>]+http-equiv\s*=\s*["']refresh["']/i);
+    if (m && m[1]) return resolveUrl(currentUrl, htmlDecode(m[1].trim()));
+
+    m = text.match(/(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i);
+    if (m && m[1]) return resolveUrl(currentUrl, htmlDecode(m[1].trim()));
+
+    m = text.match(/location\.replace\(\s*["']([^"']+)["']\s*\)/i);
+    if (m && m[1]) return resolveUrl(currentUrl, htmlDecode(m[1].trim()));
+
+    return "";
   }
 
-  function extractFinalVideoUrl(html, baseUrl) {
-    const raw = String(html || "")
+  function extractVideoUrls(html, baseUrl) {
+    var raw = String(html || "")
       .replace(/\\u002F/gi, "/")
       .replace(/\\u003A/gi, ":")
       .replace(/\\\//g, "/")
       .replace(/&amp;/g, "&");
 
-    const out = [];
-    const patterns = [
-      /<source[^>]+src=["']([^"']+)["']/gi,
-      /<video[^>]+src=["']([^"']+)["']/gi,
-      /<iframe[^>]+src=["']([^"']+)["']/gi,
-      /(?:file|src|source|video|video_url|url)\s*[:=]\s*["']([^"']+)["']/gi,
-      /["']((?:https?:)?\/\/[^"'\s<>]+\.(?:m3u8|mp4)(?:\?[^"'\s<>]*)?)["']/gi,
-      /((?:https?:)?\/\/[^\s"'<>]+\.(?:m3u8|mp4)(?:\?[^\s"'<>]*)?)/gi
+    var out = [];
+    var seen = {};
+    var patterns = [
+      /<source[^>]+src\s*=\s*["']([^"']+)["']/gi,
+      /<video[^>]+src\s*=\s*["']([^"']+)["']/gi,
+      /(?:file|src|source|video_url|downloadUrl|fileUrl|streamUrl)\s*[:=]\s*["']([^"']+)["']/gi,
+      /["']((?:https?:)?\/\/[^"'\s<>]+\.(?:m3u8|mp4|mkv)(?:\?[^"'\s<>]*)?)["']/gi,
+      /((?:https?:)\/\/[^\s"'<>]+\.(?:m3u8|mp4|mkv)(?:\?[^\s"'<>]*)?)/gi,
+      /href\s*=\s*["']((?:https?:)?\/\/[^"']+\.(?:m3u8|mp4|mkv)[^"']*)["']/gi,
+      /window\.open\(\s*["'](https?:\/\/[^"']+)["']/gi
     ];
 
-    for (const rx of patterns) {
-      let m;
+    for (var p = 0; p < patterns.length; p++) {
+      var rx = patterns[p];
+      var m;
       while ((m = rx.exec(raw)) !== null) {
-        const url = resolveUrl(baseUrl || manifest.baseUrl, m[1]);
-        if (url) out.push(url);
+        var u = resolveUrl(baseUrl || manifest.baseUrl, m[1]);
+        if (u && !seen[u] && !/\.js(\?|$)/i.test(u) && !/\.css(\?|$)/i.test(u)) {
+          seen[u] = true;
+          out.push(u);
+        }
+      }
+    }
+    return out;
+  }
+
+  function extractIframeSrc(html, baseUrl) {
+    var out = [];
+    var seen = {};
+    var rx = /<iframe[^>]+src\s*=\s*["']([^"']+)["']/gi;
+    var m;
+    while ((m = rx.exec(String(html || ""))) !== null) {
+      var u = resolveUrl(baseUrl || manifest.baseUrl, m[1]);
+      if (u && !seen[u] && !/ads|banner|google|facebook|cloudflare|wpadmngr/i.test(u)) {
+        seen[u] = true;
+        out.push(u);
+      }
+    }
+    return out;
+  }
+
+  async function fetchDetailPage(url) {
+    var res;
+    try {
+      res = await request(url);
+    } catch (_) {
+      return { url: url, html: "" };
+    }
+    var html = String(res && res.body ? res.body : "");
+
+    if (/class\s*=\s*["']movie-title["']/i.test(html) || /class\s*=\s*["']movie-header["']/i.test(html)) {
+      return { url: url, html: html };
+    }
+
+    var redirect = extractRedirectFromHtml(html, url);
+    if (redirect && redirect !== url) {
+      try {
+        var res2 = await request(redirect);
+        return { url: redirect, html: String(res2 && res2.body ? res2.body : "") };
+      } catch (_) {
+        return { url: url, html: html };
       }
     }
 
-    return Array.from(new Set(out));
-  }
-
-  function extractRedirectTarget(html, currentUrl) {
-    const text = String(html || "");
-    const meta =
-      text.match(/<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'>]+)["']/i) ||
-      text.match(/content=["'][^"']*url=([^"'>]+)["'][^>]+http-equiv=["']refresh["']/i);
-    if (meta && meta[1]) return resolveUrl(currentUrl, htmlDecode(meta[1].trim()));
-
-    const js =
-      text.match(/location\.href\s*=\s*["']([^"']+)["']/i) ||
-      text.match(/location\.replace\(\s*["']([^"']+)["']\s*\)/i) ||
-      text.match(/window\.open\(\s*["']([^"']+)["']/i) ||
-      text.match(/window\.location\s*=\s*["']([^"']+)["']/i);
-    if (js && js[1]) return resolveUrl(currentUrl, htmlDecode(js[1].trim()));
-
-    const direct =
-      text.match(/["']([^"']*loanagreement\.php\?[^"']+)["']/i) ||
-      text.match(/["']([^"']*loanid\.php\?[^"']+)["']/i);
-    if (direct && direct[1]) return resolveUrl(currentUrl, htmlDecode(direct[1].trim()));
-
-    return "";
-  }
-
-  function buildLoanAgreementFallback(url) {
-    const str = String(url || "");
-    if (!/loanid\.php/i.test(str)) return "";
-    const lid = str.match(/[?&]lid=([^&#]+)/i);
-    const f = str.match(/[?&]f=([^&#]+)/i);
-    if (!lid || !lid[1]) return "";
-    return resolveUrl(manifest.baseUrl, `/loanagreement.php?lid=${lid[1]}&f=${f && f[1] ? f[1] : "0"}`);
+    return { url: url, html: html };
   }
 
   async function resolveRedirectChain(startUrl) {
-    let current = startUrl;
-    const visited = new Set();
+    var current = startUrl;
+    var visited = {};
+    var lastBody = "";
 
-    for (let i = 0; i < 6; i += 1) {
-      if (!current || visited.has(current)) break;
-      visited.add(current);
+    for (var i = 0; i < 8; i++) {
+      if (!current || visited[current]) break;
+      visited[current] = true;
 
-      let res;
+      var res;
       try {
-        res = await request(current, { Referer: `${manifest.baseUrl}/` });
+        res = await request(current, { "Referer": manifest.baseUrl + "/" });
       } catch (_) {
         break;
       }
 
-      const body = String(res?.body || "");
-      const redirectedUrl = res?.url && String(res.url).trim() ? String(res.url).trim() : "";
+      var body = String(res && res.body ? res.body : "");
+      lastBody = body;
 
-      const candidates = [];
-      if (redirectedUrl && redirectedUrl !== current) candidates.push(redirectedUrl);
-
-      const locationHeader =
-        res?.headers?.location ||
-        res?.headers?.Location ||
-        res?.headers?.LOCATION ||
-        "";
-      if (locationHeader) candidates.push(resolveUrl(current, locationHeader));
-
-      const parsed = extractRedirectTarget(body, current);
-      if (parsed) candidates.push(parsed);
-
-      if (/loanid\.php/i.test(current)) {
-        const fallback = buildLoanAgreementFallback(current);
-        if (fallback) candidates.push(fallback);
+      var videos = extractVideoUrls(body, current);
+      if (videos.length > 0) {
+        return { url: current, html: body, videos: videos };
       }
 
-      const next = candidates.find((u) => u && !visited.has(u));
+      var candidates = [];
+
+      var redirectedUrl = res && res.url ? String(res.url).trim() : "";
+      if (redirectedUrl && redirectedUrl !== current && !visited[redirectedUrl]) {
+        candidates.push(redirectedUrl);
+      }
+
+      if (res && res.headers) {
+        var loc = res.headers.location || res.headers.Location || res.headers.LOCATION || "";
+        if (loc) candidates.push(resolveUrl(current, loc));
+      }
+
+      var metaRedirect = extractRedirectFromHtml(body, current);
+      if (metaRedirect) candidates.push(metaRedirect);
+
+      var directLink = body.match(/href\s*=\s*["'](https?:\/\/[^"']+\.(?:mp4|mkv|m3u8)[^"']*)["']/i);
+      if (directLink && directLink[1]) candidates.push(directLink[1]);
+
+      var next = "";
+      for (var c = 0; c < candidates.length; c++) {
+        if (candidates[c] && !visited[candidates[c]]) {
+          next = candidates[c];
+          break;
+        }
+      }
+
       if (!next) {
-        return { url: current, html: body };
+        return { url: current, html: body, videos: [] };
       }
       current = next;
     }
 
     try {
-      const res = await request(current, { Referer: `${manifest.baseUrl}/` });
-      return { url: current, html: String(res?.body || "") };
+      var finalRes = await request(current, { "Referer": manifest.baseUrl + "/" });
+      var finalBody = String(finalRes && finalRes.body ? finalRes.body : "");
+      return { url: current, html: finalBody, videos: extractVideoUrls(finalBody, current) };
     } catch (_) {
-      return { url: current, html: "" };
+      return { url: current, html: lastBody, videos: [] };
     }
   }
 
   async function getHome(cb) {
     try {
-      const doc = await loadDoc(`${manifest.baseUrl}/`);
-      const items = collectItems(doc);
+      var res = await request(manifest.baseUrl + "/");
+      var html = String(res && res.body ? res.body : "");
+      var doc = parseHtml(html);
+      var items = parseMovieCards(doc);
 
-      const latest = items.slice(0, 30);
-      const trending = items.slice(0, 15);
-      const data = {};
+      var data = {};
+      if (items.length > 0) {
+        data["Latest Updates"] = items.slice(0, 30);
+        if (items.length > 6) {
+          data["Trending"] = items.slice(0, 6);
+        }
+      }
 
-      if (trending.length > 0) data["Trending"] = trending;
-      if (latest.length > 0) data["Latest"] = latest;
-
-      cb({ success: true, data });
+      cb({ success: true, data: data });
     } catch (e) {
-      cb({ success: false, errorCode: "PARSE_ERROR", message: String(e?.message || e) });
+      cb({
+        success: false,
+        errorCode: "PARSE_ERROR",
+        message: String(e && e.message ? e.message : e)
+      });
     }
   }
 
   async function search(query, cb) {
     try {
-      const qRaw = String(query || "").trim();
+      var qRaw = String(query || "").trim();
       if (!qRaw) return cb({ success: true, data: [] });
-      const q = encodeURIComponent(qRaw);
-      const doc = await loadDoc(`${manifest.baseUrl}/?s=${q}`);
-      const items = collectItems(doc);
-      const lowered = qRaw.toLowerCase();
-      const ranked = items.filter((x) => String(x?.title || "").toLowerCase().includes(lowered));
-      cb({ success: true, data: (ranked.length ? ranked : items).slice(0, 40) });
+      var q = encodeURIComponent(qRaw);
+      var res = await request(manifest.baseUrl + "/?q=" + q);
+      var html = String(res && res.body ? res.body : "");
+      var doc = parseHtml(html);
+      var items = parseMovieCards(doc);
+
+      cb({ success: true, data: items.slice(0, 40) });
     } catch (e) {
-      cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e?.message || e) });
+      cb({
+        success: false,
+        errorCode: "SEARCH_ERROR",
+        message: String(e && e.message ? e.message : e)
+      });
     }
   }
 
   async function load(url, cb) {
     try {
-      const target = normalizeUrl(url, manifest.baseUrl);
-      const doc = await loadDoc(target);
-      const bodyText = safeText(doc.body || doc.documentElement);
+      var target = normalizeUrl(url, manifest.baseUrl);
+      var page = await fetchDetailPage(target);
+      var html = page.html;
+      var doc = parseHtml(html);
 
-      const title =
-        cleanTitle(safeText(doc.querySelector("h1.movie-title, h1"))) ||
-        cleanTitle(getAttr(doc.querySelector('meta[property="og:title"]'), "content")) ||
+      var title =
+        cleanTitle(safeText(doc.querySelector("h1.movie-title"))) ||
+        cleanTitle(safeText(doc.querySelector("h1"))) ||
         "Unknown";
 
-      const posterUrl = normalizeUrl(
-        getAttr(doc.querySelector('meta[property="og:image"], img.poster, .poster-container img, img'), "content", "data-src", "src"),
-        manifest.baseUrl
-      );
+      var posterImg =
+        doc.querySelector("img.poster") ||
+        doc.querySelector(".poster-container img") ||
+        doc.querySelector("img.movie-poster") ||
+        doc.querySelector(".movie-header img");
+      var posterUrl = getAttr(posterImg, "src", "data-src") || "";
 
-      const description =
-        cleanTitle(getAttr(doc.querySelector('meta[property="og:description"]'), "content")) ||
-        cleanTitle(safeText(doc.querySelector(".overview, .description, p")));
+      var descEl = doc.querySelector("p.overview") || doc.querySelector(".overview");
+      var description = cleanTitle(safeText(descEl));
+      if (!description) {
+        description = cleanTitle(
+          getAttr(doc.querySelector('meta[name="description"]'), "content")
+        );
+      }
 
-      const year = parseYear(bodyText);
-      const score = parseScore(bodyText);
+      var bodyText = safeText(doc.querySelector(".movie-meta")) || safeText(doc.body || doc.documentElement);
+      var year = parseYear(safeText(doc.querySelector(".movie-year")) || bodyText);
 
-      const loanLinks = extractLoanLinksFromHtml(String((doc.documentElement || doc.body)?.innerHTML || ""), target);
-      const playUrl = loanLinks[0] || target;
+      var scoreMatch = bodyText.match(/(\d+(?:\.\d+)?)\s*\/\s*10/);
+      var score = scoreMatch ? parseFloat(scoreMatch[1]) : undefined;
 
-      const item = new MultimediaItem({
-        title,
-        url: playUrl,
-        posterUrl,
-        bannerUrl: posterUrl,
-        description,
-        year,
-        score,
-        type: "movie",
-        contentType: "movie",
-        episodes: [
+      var fileItems = Array.from(doc.querySelectorAll("a.file-item[data-href], .file-item[data-href]"));
+      var episodes = [];
+
+      for (var i = 0; i < fileItems.length; i++) {
+        var fi = fileItems[i];
+        var dataHref = getAttr(fi, "data-href");
+        if (!dataHref) continue;
+
+        var epUrl = normalizeUrl(dataHref, manifest.baseUrl);
+        var fileName = cleanTitle(safeText(fi.querySelector(".file-name")));
+        var fileSize = cleanTitle(safeText(fi.querySelector(".file-size")));
+        var quality = extractQuality(fileName || dataHref);
+
+        var epName = fileName.replace(/\.(mkv|mp4|avi|mov|ts)/gi, "").trim();
+        if (fileSize) epName = epName + " [" + fileSize + "]";
+        if (!epName) epName = title + " - " + quality;
+
+        episodes.push(
+          new Episode({
+            name: epName,
+            url: epUrl,
+            season: 1,
+            episode: i + 1,
+            posterUrl: posterUrl
+          })
+        );
+      }
+
+      if (episodes.length === 0) {
+        episodes.push(
           new Episode({
             name: title,
-            url: playUrl,
+            url: target,
             season: 1,
             episode: 1,
-            posterUrl
+            posterUrl: posterUrl
           })
-        ]
+        );
+      }
+
+      var item = new MultimediaItem({
+        title: title,
+        url: target,
+        posterUrl: posterUrl,
+        bannerUrl: posterUrl,
+        description: description,
+        year: year,
+        score: score,
+        type: "movie",
+        contentType: "movie",
+        episodes: episodes
       });
 
       cb({ success: true, data: item });
     } catch (e) {
-      cb({ success: false, errorCode: "LOAD_ERROR", message: String(e?.message || e) });
+      cb({
+        success: false,
+        errorCode: "LOAD_ERROR",
+        message: String(e && e.message ? e.message : e)
+      });
     }
   }
 
   async function loadStreams(url, cb) {
     try {
-      const target = normalizeUrl(url, manifest.baseUrl);
+      var target = normalizeUrl(url, manifest.baseUrl);
+      var streams = [];
 
-      let detailUrl = target;
-      let detailHtml = "";
+      if (/loanagreement\.php/i.test(target)) {
+        var result = await resolveRedirectChain(target);
 
-      if (!/loanid\.php|loanagreement\.php/i.test(target)) {
-        const pageRes = await request(target);
-        detailHtml = String(pageRes?.body || "");
-        const loanLinks = extractLoanLinksFromHtml(detailHtml, target);
-        if (loanLinks.length > 0) detailUrl = loanLinks[0];
-      }
+        for (var i = 0; i < result.videos.length; i++) {
+          var u = result.videos[i];
+          var quality = extractQuality(u + " " + target);
+          streams.push(
+            new StreamResult({
+              name: "TellyBiz - " + quality,
+              url: u,
+              quality: quality,
+              source: "TellyBiz",
+              headers: {
+                "Referer": result.url || manifest.baseUrl + "/",
+                "User-Agent": UA
+              }
+            })
+          );
+        }
 
-      if (!/loanid\.php|loanagreement\.php/i.test(detailUrl) && detailHtml) {
-        const links = extractLoanLinksFromHtml(detailHtml, target);
-        if (links.length > 0) detailUrl = links[0];
-      }
+        if (streams.length === 0) {
+          var iframes = extractIframeSrc(result.html, result.url);
+          for (var f = 0; f < iframes.length; f++) {
+            try {
+              var ifrRes = await request(iframes[f], { "Referer": result.url });
+              var ifrBody = String(ifrRes && ifrRes.body ? ifrRes.body : "");
+              var ifrVideos = extractVideoUrls(ifrBody, iframes[f]);
+              for (var v = 0; v < ifrVideos.length; v++) {
+                var q2 = extractQuality(ifrVideos[v]);
+                streams.push(
+                  new StreamResult({
+                    name: "TellyBiz - " + q2,
+                    url: ifrVideos[v],
+                    quality: q2,
+                    source: "TellyBiz",
+                    headers: {
+                      "Referer": iframes[f],
+                      "User-Agent": UA
+                    }
+                  })
+                );
+              }
+            } catch (_) {}
+          }
+        }
 
-      let finalPage = { url: detailUrl, html: "" };
-
-      if (/loanid\.php|loanagreement\.php/i.test(detailUrl)) {
-        finalPage = await resolveRedirectChain(detailUrl);
+        if (streams.length === 0 && /\.(mp4|mkv|m3u8)(\?|$)/i.test(result.url)) {
+          var q3 = extractQuality(result.url + " " + target);
+          streams.push(
+            new StreamResult({
+              name: "TellyBiz - " + q3,
+              url: result.url,
+              quality: q3,
+              source: "TellyBiz",
+              headers: {
+                "Referer": manifest.baseUrl + "/",
+                "User-Agent": UA
+              }
+            })
+          );
+        }
       } else {
-        finalPage = { url: detailUrl, html: detailHtml };
-      }
+        var page = await fetchDetailPage(target);
+        var doc = parseHtml(page.html);
+        var fileItems = Array.from(
+          doc.querySelectorAll("a.file-item[data-href], .file-item[data-href]")
+        );
 
-      let finalHtml = String(finalPage?.html || "");
-      let finalUrl = String(finalPage?.url || detailUrl);
+        for (var j = 0; j < fileItems.length; j++) {
+          var dataHref = getAttr(fileItems[j], "data-href");
+          if (!dataHref) continue;
+          var loanUrl = normalizeUrl(dataHref, manifest.baseUrl);
 
-      if (/loanid\.php/i.test(finalUrl) || /loanid\.php/i.test(finalHtml)) {
-        const fallback = buildLoanAgreementFallback(finalUrl) || extractRedirectTarget(finalHtml, finalUrl);
-        if (fallback) {
-          finalPage = await resolveRedirectChain(fallback);
-          finalHtml = String(finalPage?.html || "");
-          finalUrl = String(finalPage?.url || fallback);
+          try {
+            var result2 = await resolveRedirectChain(loanUrl);
+            for (var k = 0; k < result2.videos.length; k++) {
+              var q4 = extractQuality(result2.videos[k] + " " + dataHref);
+              streams.push(
+                new StreamResult({
+                  name: "TellyBiz - " + q4,
+                  url: result2.videos[k],
+                  quality: q4,
+                  source: "TellyBiz",
+                  headers: {
+                    "Referer": result2.url || manifest.baseUrl + "/",
+                    "User-Agent": UA
+                  }
+                })
+              );
+            }
+
+            if (
+              result2.videos.length === 0 &&
+              /\.(mp4|mkv|m3u8)(\?|$)/i.test(result2.url)
+            ) {
+              var q5 = extractQuality(result2.url + " " + dataHref);
+              streams.push(
+                new StreamResult({
+                  name: "TellyBiz - " + q5,
+                  url: result2.url,
+                  quality: q5,
+                  source: "TellyBiz",
+                  headers: {
+                    "Referer": manifest.baseUrl + "/",
+                    "User-Agent": UA
+                  }
+                })
+              );
+            }
+          } catch (_) {}
         }
       }
 
-      const found = extractFinalVideoUrl(finalHtml, finalUrl);
-      const streams = [];
-
-      for (const u of found) {
-        if (!u) continue;
-        const quality = extractQuality(u);
-        if (/\.m3u8(\?|$)/i.test(u) || /\.mp4(\?|$)/i.test(u)) {
-          streams.push(new StreamResult({
-            name: `TellyBiz - ${quality}`,
-            url: u,
-            quality,
-            source: `TellyBiz - ${quality}`,
-            headers: {
-              "Referer": finalUrl || `${manifest.baseUrl}/`,
-              "User-Agent": UA
-            }
-          }));
-        } else if (/^https?:\/\//i.test(u)) {
-          streams.push(new StreamResult({
-            name: "TellyBiz - Embed",
-            url: u,
-            quality: "Auto",
-            source: "TellyBiz - Embed",
-            headers: {
-              "Referer": finalUrl || `${manifest.baseUrl}/`,
-              "User-Agent": UA
-            }
-          }));
-        }
-      }
-
-      const uniq = [];
-      const seen = new Set();
-      for (const s of streams) {
-        const key = `${s.url}|${s.quality}|${s.name}`;
-        if (!s?.url || seen.has(key)) continue;
-        seen.add(key);
-        uniq.push(s);
+      var uniq = [];
+      var seen = {};
+      for (var s = 0; s < streams.length; s++) {
+        var key = streams[s].url || "";
+        if (!key || seen[key]) continue;
+        seen[key] = true;
+        uniq.push(streams[s]);
       }
 
       cb({ success: true, data: uniq });
     } catch (e) {
-      cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
+      cb({
+        success: false,
+        errorCode: "STREAM_ERROR",
+        message: String(e && e.message ? e.message : e)
+      });
     }
   }
 
