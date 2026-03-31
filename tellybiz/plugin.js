@@ -1,6 +1,6 @@
 (function() {
-    /**
-     * @type {import('@skystream/sdk').Manifest}
+    /** 
+     * @type {import('@skystream/sdk').Manifest} 
      */
     // manifest is injected at runtime
 
@@ -17,8 +17,8 @@
         if (!raw) return "";
         if (raw.startsWith("//")) return `https:${raw}`;
         if (/^https?:\/\//i.test(raw)) return raw;
-        if (raw.startsWith("/")) return `\( {base || manifest.baseUrl} \){raw}`;
-        return `\( {base || manifest.baseUrl}/ \){raw}`;
+        if (raw.startsWith("/")) return `\( {base} \){raw}`;
+        return `\( {base}/ \){raw}`;
     }
 
     function resolveUrl(base, next) {
@@ -54,8 +54,30 @@
         return "";
     }
 
+    function parseYear(text) {
+        const m = String(text || "").match(/\b(19\d{2}|20\d{2})\b/);
+        return m ? parseInt(m[1], 10) : undefined;
+    }
+
+    function uniqueByUrl(items) {
+        const out = [];
+        const seen = new Set();
+        for (const it of items || []) {
+            if (!it?.url || seen.has(it.url)) continue;
+            seen.add(it.url);
+            out.push(it);
+        }
+        return out;
+    }
+
+    function cleanTitle(raw) {
+        return htmlDecode(String(raw || ""))
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
     function safeText(text) {
-        return htmlDecode(String(text || "")).replace(/\s+/g, " ").trim();
+        return String(text || "").trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
     }
 
     async function request(url, headers = {}) {
@@ -69,157 +91,238 @@
         return parseHtml(res.body);
     }
 
-    // ====================== HELPERS FOR TELLYBIZ ======================
-
-    function parsePosterItem(card) {
+    function parseListItem(card) {
         if (!card) return null;
-        const a = card.querySelector("a[href]");
-        if (!a) return null;
+        const a = card.querySelector("a[href], .poster a, .movie-card a, article a, .thumb a");
         const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
-        if (!href || /\/(category|tag|page|author|contact)/i.test(href)) return null;
+        if (!href) return null;
+        if (/\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/)/i.test(href)) return null;
 
         const img = card.querySelector("img");
-        const title = safeText(
+        const title = cleanTitle(
+            textOf(card.querySelector("h2, h3, .title, .name, .movie-title")) ||
             getAttr(a, "title") ||
-            textOf(card.querySelector("h2, h3, .title, .name")) ||
-            getAttr(img, "alt")
+            getAttr(img, "alt", "title") ||
+            textOf(a)
         );
+        if (!title || title.length < 2) return null;
 
-        if (!title) return null;
-
-        const posterUrl = normalizeUrl(getAttr(img, "data-src", "src", "data-lazy"), manifest.baseUrl);
+        const posterUrl = normalizeUrl(getAttr(img, "data-src", "data-lazy-src", "src", "data-original"), manifest.baseUrl);
+        const type = /series|season|episode|web-series/i.test(href + " " + title) ? "series" : "movie";
 
         return new MultimediaItem({
             title,
             url: href,
             posterUrl,
-            type: "movie", // tellybiz mostly movies / series mixed
-            contentType: "movie"
+            type,
+            contentType: type
         });
     }
 
-    function collectHomeItems(doc) {
-        const cards = Array.from(doc.querySelectorAll(".poster, .item, .movie-card, article, .grid-item, .thumb"));
-        const out = [];
-        for (const card of cards) {
-            const item = parsePosterItem(card);
-            if (item) out.push(item);
+    function collectItems(doc) {
+        const selectors = [
+            ".poster", ".movie-card", ".item", "article", ".thumb", ".grid-item", ".list-item",
+            ".swiper-slide", ".owl-item", ".movie-poster", ".card"
+        ];
+        let found = [];
+        for (const sel of selectors) {
+            const nodes = Array.from(doc.querySelectorAll(sel));
+            for (const node of nodes) {
+                const item = parseListItem(node);
+                if (item) found.push(item);
+            }
+            if (found.length >= 40) break;
         }
-        return out.filter((v, i, a) => a.findIndex(t => t.url === v.url) === i).slice(0, 30);
+        return uniqueByUrl(found);
     }
 
-    // ====================== REDIRECT BYPASS ======================
-
-    async function bypassLoanRedirect(detailUrl) {
-        let current = detailUrl;
-
-        // Step 1: Load detail page and find loanid.php link
-        const detailDoc = await loadDoc(current);
-        let loanUrl = "";
-
-        // Look for loanid.php anywhere
-        const loanLink = detailDoc.querySelector('a[href*="loanid.php"]');
-        if (loanLink) {
-            loanUrl = normalizeUrl(getAttr(loanLink, "href"), manifest.baseUrl);
-        } else {
-            // fallback regex in page source
-            const bodyText = String(detailDoc.body ? detailDoc.body.innerHTML : "");
-            const loanMatch = bodyText.match(/https?:\/\/[^"'\s]+?loanid\.php\?lid=[^"'\s]+/i);
-            if (loanMatch) loanUrl = loanMatch[0];
+    function extractLoanIdLink(doc) {
+        const patterns = [
+            'a[href*="loanid.php"]',
+            'a[href*="loanagreement.php"]',
+            'script, a, button',
+            'meta[http-equiv="refresh"]',
+            'a[href]'
+        ];
+        for (const sel of patterns) {
+            const els = Array.from(doc.querySelectorAll(sel));
+            for (const el of els) {
+                let href = getAttr(el, "href", "content");
+                if (href && /loanid\.php\?lid=/.test(href)) {
+                    return resolveUrl(manifest.baseUrl, href);
+                }
+                // fallback regex in text
+                const text = safeText(el.textContent || el.innerHTML || "");
+                const m = text.match(/loanid\.php\?lid=([a-zA-Z0-9]+)/i);
+                if (m) return `\( {manifest.baseUrl}/loanid.php?lid= \){m[1]}`;
+            }
         }
+        return "";
+    }
 
-        if (!loanUrl) return current; // no redirect found
+    async function followRedirectChain(startUrl) {
+        let current = startUrl;
+        let attempts = 0;
+        const maxAttempts = 8;
 
-        // Step 2: Hit loanid.php (follow any 30x or meta/JS redirect)
-        let res = await request(loanUrl);
-        let html = String(res.body || "");
+        while (attempts < maxAttempts) {
+            attempts++;
+            const res = await request(current, { "Referer": manifest.baseUrl });
+            const body = safeText(res.body || "");
+            const status = res.status || 200; // assume http_get provides status if available
 
-        // Follow meta refresh
-        const metaRefresh = html.match(/<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'](\d+);\s*url=([^"']+)["']/i);
-        if (metaRefresh) {
-            const next = normalizeUrl(metaRefresh[2], manifest.baseUrl);
-            res = await request(next);
-            html = String(res.body || "");
+            // 1. HTTP 30x redirect
+            if (status >= 300 && status < 400 && res.headers && res.headers.location) {
+                current = resolveUrl(current, res.headers.location);
+                continue;
+            }
+
+            // 2. Meta refresh
+            const metaRefresh = body.match(/<meta[^>]*http-equiv=["']refresh["'][^>]*content=["'](\d+);\s*url=([^"']+)["']/i);
+            if (metaRefresh) {
+                current = resolveUrl(current, metaRefresh[2]);
+                continue;
+            }
+
+            // 3. JS redirect (window.location, setTimeout, etc.)
+            const jsRedirect = body.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
+                              body.match(/location\.href\s*=\s*["']([^"']+)["']/i) ||
+                              body.match(/setTimeout\(\s*function\(\)\s*\{\s*window\.location\s*=\s*["']([^"']+)["']/i);
+            if (jsRedirect) {
+                current = resolveUrl(current, jsRedirect[1] || jsRedirect[2] || jsRedirect[3]);
+                continue;
+            }
+
+            // 4. If we reached loanagreement.php or contains video tags, stop
+            if (/loanagreement\.php/i.test(current) || /<video|<source|player|iframe.*src|file|src=.*m3u8|mp4/i.test(body)) {
+                return { url: current, body, final: true };
+            }
+
+            // fallback - try to construct loanagreement if loanid was hit
+            if (/loanid\.php/i.test(current)) {
+                const lidMatch = current.match(/lid=([a-zA-Z0-9]+)/i);
+                if (lidMatch) {
+                    current = `\( {manifest.baseUrl}/loanagreement.php?lid= \){lidMatch[1]}&f=0`;
+                    continue;
+                }
+            }
+
+            break; // no more redirects
         }
-
-        // Follow JS window.location or similar
-        let jsRedirect = html.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
-                        html.match(/location\.href\s*=\s*["']([^"']+)["']/i);
-        if (jsRedirect) {
-            const next = normalizeUrl(jsRedirect[1], manifest.baseUrl);
-            res = await request(next);
-            html = String(res.body || "");
-        }
-
-        // Step 3: If we landed on loanagreement.php or similar, extract final video
-        current = res.url || current; // final URL after redirects
-
-        return { html, finalUrl: current };
+        return { url: current, body: safeText((await request(current)).body || ""), final: true };
     }
 
     function extractFinalVideoUrl(html, baseUrl) {
-        const text = String(html || "");
+        const raw = String(html || "")
+            .replace(/\\u002F/g, "/")
+            .replace(/\\u003A/g, ":")
+            .replace(/\\+\//g, "/")
+            .replace(/&amp;/g, "&");
 
-        // m3u8
-        const m3u8Match = text.match(/(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i);
-        if (m3u8Match) return { url: m3u8Match[1], type: "hls" };
+        const candidates = [];
 
-        // direct mp4
-        const mp4Match = text.match(/(https?:\/\/[^\s"']+\.mp4[^\s"']*)/i);
-        if (mp4Match) return { url: mp4Match[1], type: "mp4" };
+        // m3u8 patterns
+        const m3u8Patterns = [
+            /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/gi,
+            /["']((?:https?:)?\/\/[^"'\s]+?\.m3u8[^"'\s]*)["']/gi,
+            /file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/gi,
+            /source\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/gi,
+            /playlist\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/gi
+        ];
+        for (const p of m3u8Patterns) {
+            let m;
+            while ((m = p.exec(raw)) !== null) {
+                const u = resolveUrl(baseUrl, m[1]);
+                if (/\.m3u8(\?|$)/i.test(u)) candidates.push({ url: u, type: "hls" });
+            }
+        }
 
-        // iframe
-        const iframeMatch = text.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+        // mp4 patterns
+        const mp4Patterns = [
+            /(https?:\/\/[^\s"']+\.mp4[^\s"']*)/gi,
+            /["']((?:https?:)?\/\/[^"'\s]+?\.mp4[^"'\s]*)["']/gi,
+            /source\s*[:=]\s*["']([^"']+\.mp4[^"']*)["']/gi
+        ];
+        for (const p of mp4Patterns) {
+            let m;
+            while ((m = p.exec(raw)) !== null) {
+                const u = resolveUrl(baseUrl, m[1]);
+                if (/\.mp4(\?|$)/i.test(u)) candidates.push({ url: u, type: "mp4" });
+            }
+        }
+
+        // iframe / embed
+        const iframeMatch = raw.match(/<iframe[^>]+src=["']([^"']+)["']/i);
         if (iframeMatch) {
-            return { url: normalizeUrl(iframeMatch[1], baseUrl), type: "iframe" };
+            candidates.push({ url: resolveUrl(baseUrl, iframeMatch[1]), type: "iframe" });
         }
 
         // <source> tag
-        const sourceMatch = text.match(/<source[^>]+src=["']([^"']+)["']/i);
+        const sourceMatch = raw.match(/<source[^>]+src=["']([^"']+)["']/i);
         if (sourceMatch) {
-            const src = normalizeUrl(sourceMatch[1], baseUrl);
-            if (/\.m3u8/i.test(src)) return { url: src, type: "hls" };
-            if (/\.mp4/i.test(src)) return { url: src, type: "mp4" };
+            const u = resolveUrl(baseUrl, sourceMatch[1]);
+            candidates.push({ url: u, type: /\.(m3u8|mp4)/i.test(u) ? (/\.m3u8/i.test(u) ? "hls" : "mp4") : "direct" });
         }
 
-        // JS variables (common patterns)
-        const jsVarMatch = text.match(/(?:file|src|url|player|video)\s*[:=]\s*["']([^"']+\.(m3u8|mp4))["']/i);
+        // JS variables (common in such players)
+        const jsVarMatch = raw.match(/(?:var|let|const)\s+(?:video|file|source|player|url)\s*=\s*["']([^"']+)["']/i);
         if (jsVarMatch) {
-            return { url: normalizeUrl(jsVarMatch[1], baseUrl), type: jsVarMatch[2] === "m3u8" ? "hls" : "mp4" };
+            const u = resolveUrl(baseUrl, jsVarMatch[1]);
+            if (/\.(m3u8|mp4)/i.test(u)) candidates.push({ url: u, type: /\.m3u8/i.test(u) ? "hls" : "mp4" });
         }
 
-        return null;
+        return candidates;
     }
-
-    // ====================== MAIN FUNCTIONS ======================
 
     async function getHome(cb) {
         try {
-            const doc = await loadDoc(manifest.baseUrl);
-            const items = collectHomeItems(doc);
+            const data = {};
+            const sections = [
+                { name: "Trending", path: "/" },
+                { name: "Latest Movies", path: "/" },
+                { name: "Latest Web Series", path: "/" },
+                { name: "Bollywood", path: "/bollywood" },
+                { name: "Hollywood", path: "/hollywood" },
+                { name: "South Indian", path: "/south" }
+            ];
 
-            const data = {
-                "Trending": items.slice(0, 20),
-                "Latest": items.slice(10, 30)
-            };
+            for (const section of sections) {
+                let items = [];
+                try {
+                    const target = section.path === "/" ? manifest.baseUrl : `\( {manifest.baseUrl} \){section.path}`;
+                    const doc = await loadDoc(target);
+                    items = collectItems(doc);
+                } catch (_) {}
+
+                if (items.length === 0 && section.path === "/") {
+                    // fallback scrape full homepage for multiple grids if any
+                    const doc = await loadDoc(manifest.baseUrl);
+                    items = collectItems(doc);
+                }
+
+                items = uniqueByUrl(items).slice(0, 30);
+                if (items.length > 0) data[section.name] = items;
+            }
 
             cb({ success: true, data });
         } catch (e) {
-            cb({ success: false, errorCode: "HOME_ERROR", message: String(e) });
+            cb({ success: false, errorCode: "PARSE_ERROR", message: String(e?.message || e) });
         }
     }
 
     async function search(query, cb) {
         try {
-            const q = encodeURIComponent(String(query || "").trim());
-            if (!q) return cb({ success: true, data: [] });
+            const raw = String(query || "").trim();
+            if (!raw) return cb({ success: true, data: [] });
 
+            const q = encodeURIComponent(raw);
             const doc = await loadDoc(`\( {manifest.baseUrl}/?s= \){q}`);
-            const items = collectHomeItems(doc);
+            const items = collectItems(doc);
+            const ranked = items.filter(it => String(it.title || "").toLowerCase().includes(raw.toLowerCase()));
 
-            cb({ success: true, data: items });
+            cb({ success: true, data: ranked.length ? ranked.slice(0, 40) : items.slice(0, 40) });
         } catch (e) {
-            cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e) });
+            cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e?.message || e) });
         }
     }
 
@@ -228,20 +331,39 @@
             const target = normalizeUrl(url, manifest.baseUrl);
             const doc = await loadDoc(target);
 
-            const title = safeText(
-                textOf(doc.querySelector("h1, .entry-title, .title")) ||
-                getAttr(doc.querySelector('meta[property="og:title"]'), "content")
-            ) || "Unknown Title";
+            const title = cleanTitle(
+                textOf(doc.querySelector("h1, .title, .movie-title")) ||
+                getAttr(doc.querySelector('meta[property="og:title"]'), "content") ||
+                "Unknown Title"
+            );
 
             const posterUrl = normalizeUrl(
-                getAttr(doc.querySelector('meta[property="og:image"], img'), "content", "src", "data-src"),
+                getAttr(doc.querySelector('meta[property="og:image"], img.poster, .poster img'), "content", "data-src", "src"),
                 manifest.baseUrl
             );
 
-            const description = safeText(
-                textOf(doc.querySelector(".description, .entry-content p, .summary")) ||
-                getAttr(doc.querySelector('meta[property="og:description"]'), "content")
+            const description = cleanTitle(
+                getAttr(doc.querySelector('meta[property="og:description"]'), "content") ||
+                textOf(doc.querySelector(".description, .synopsis, .entry-content p, .story"))
             );
+
+            const loanidLink = extractLoanIdLink(doc); // for later use in streams
+
+            const contentType = /series|season|episode|web-series/i.test(target + " " + title) ? "series" : "movie";
+            const year = parseYear(`${title} ${description} ${textOf(doc.body || doc.documentElement)}`);
+
+            const episodes = contentType === "series" 
+                ? Array.from(doc.querySelectorAll("a[href*='episode'], a[href*='season']")).map(a => {
+                    const epHref = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
+                    return new Episode({
+                        name: cleanTitle(textOf(a)) || "Episode",
+                        url: epHref,
+                        season: 1,
+                        episode: 1,
+                        posterUrl
+                    });
+                }).filter(Boolean)
+                : [new Episode({ name: title, url: target, season: 1, episode: 1, posterUrl })];
 
             const item = new MultimediaItem({
                 title,
@@ -249,70 +371,108 @@
                 posterUrl,
                 bannerUrl: posterUrl,
                 description,
-                type: "movie",
-                contentType: "movie"
+                type: contentType,
+                contentType,
+                year,
+                episodes: episodes.length ? uniqueByUrl(episodes) : undefined,
+                // store loanid for streams if needed
+                extra: { loanidLink }
             });
 
             cb({ success: true, data: item });
         } catch (e) {
-            cb({ success: false, errorCode: "LOAD_ERROR", message: String(e) });
+            cb({ success: false, errorCode: "LOAD_ERROR", message: String(e?.message || e) });
         }
     }
 
     async function loadStreams(url, cb) {
         try {
-            const detailUrl = normalizeUrl(url, manifest.baseUrl);
+            let pageUrl = normalizeUrl(url, manifest.baseUrl);
+            let detailDoc = await loadDoc(pageUrl);
 
-            // Bypass the 5-second loanid → loanagreement redirect chain
-            const { html, finalUrl } = await bypassLoanRedirect(detailUrl);
+            // 1. Extract loanid.php trigger (robust)
+            let loanidUrl = extractLoanIdLink(detailDoc);
+            if (!loanidUrl) {
+                // fallback from extra if passed from load
+                const extraLoan = detailDoc.querySelector('script[data-loanid]') ? null : null; // generic
+                const bodyText = safeText(detailDoc.body.innerHTML || "");
+                const fallbackMatch = bodyText.match(/loanid\.php\?lid=([a-z0-9]+)/i);
+                if (fallbackMatch) loanidUrl = `\( {manifest.baseUrl}/loanid.php?lid= \){fallbackMatch[1]}`;
+            }
 
-            const videoInfo = extractFinalVideoUrl(html, finalUrl);
+            if (!loanidUrl) {
+                return cb({ success: false, errorCode: "NO_LOANID", message: "Loanid link not found" });
+            }
+
+            // 2. Follow full redirect chain (handles 30x, meta, JS, 5s delay bypass)
+            const redirectResult = await followRedirectChain(loanidUrl);
+
+            if (!redirectResult.final) {
+                return cb({ success: false, errorCode: "REDIRECT_FAILED" });
+            }
+
+            const finalHtml = redirectResult.body;
+            const finalBase = redirectResult.url;
+
+            // 3. Extract all possible stream types
+            const videoCandidates = extractFinalVideoUrl(finalHtml, finalBase);
 
             const streams = [];
-
-            if (videoInfo) {
-                let streamName = "Tellybiz";
-                if (videoInfo.type === "hls") streamName += " - HLS";
-                else if (videoInfo.type === "mp4") streamName += " - MP4";
-                else streamName += " - Embed";
+            for (const cand of videoCandidates) {
+                const streamName = cand.type === "hls" ? "Tellybiz HLS" : 
+                                  (cand.type === "mp4" ? "Tellybiz MP4" : "Tellybiz Player");
+                const quality = cand.type === "hls" ? "Auto" : (cand.url.includes("1080") ? "1080p" : "720p");
 
                 streams.push(new StreamResult({
                     name: streamName,
-                    url: videoInfo.url,
-                    quality: "Auto",
-                    source: "Tellybiz",
+                    url: cand.url,
+                    quality,
+                    source: `Tellybiz - ${cand.type.toUpperCase()}`,
                     headers: {
+                        "Referer": finalBase,
                         "User-Agent": UA,
-                        "Referer": finalUrl
+                        "Origin": manifest.baseUrl
                     }
                 }));
             }
 
-            // Fallback: try direct iframe or source if nothing found
+            // fallback if no direct video - look for iframe player
             if (streams.length === 0) {
-                const doc = await loadDoc(detailUrl);
-                const iframeSrc = getAttr(doc.querySelector("iframe"), "src");
+                const iframeSrc = finalHtml.match(/<iframe[^>]+src=["']([^"']+)["']/i);
                 if (iframeSrc) {
+                    const iframeUrl = resolveUrl(finalBase, iframeSrc[1]);
                     streams.push(new StreamResult({
-                        name: "Tellybiz - Embed",
-                        url: normalizeUrl(iframeSrc, detailUrl),
+                        name: "Tellybiz iframe",
+                        url: iframeUrl,
                         quality: "Auto",
-                        source: "Tellybiz - Embed",
-                        headers: { "Referer": detailUrl }
+                        source: "Tellybiz iframe",
+                        headers: { "Referer": finalBase, "User-Agent": UA }
+                    }));
+                }
+            }
+
+            if (streams.length === 0) {
+                // last resort - any .m3u8 / .mp4 in final page
+                const extraM3u8 = finalHtml.match(/(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i);
+                if (extraM3u8) {
+                    streams.push(new StreamResult({
+                        name: "Tellybiz Auto",
+                        url: extraM3u8[1],
+                        quality: "Auto",
+                        source: "Tellybiz Auto",
+                        headers: { "Referer": finalBase, "User-Agent": UA }
                     }));
                 }
             }
 
             cb({ success: true, data: streams });
         } catch (e) {
-            cb({ success: false, errorCode: "STREAM_ERROR", message: String(e) });
+            cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
         }
     }
 
-    // Expose to SkyStream
     globalThis.getHome = getHome;
     globalThis.search = search;
     globalThis.load = load;
     globalThis.loadStreams = loadStreams;
-
 })();
