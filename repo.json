@@ -1,0 +1,9 @@
+{
+  "name": "Telugu-Repository",
+  "packageName": "sky.delta",
+  "description": "SkyStream plugins repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/plugins.json"
+  ]
+}

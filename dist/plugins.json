@@ -1,0 +1,21 @@
+[
+  {
+    "packageName": "tellybiz",
+    "name": "TellyBiz",
+    "version": 1,
+    "baseUrl": "https://tellybiz.in",
+    "description": "TellyBiz scraper with homepage sections, search, metadata extraction, loan redirect bypass, and final stream resolution.",
+    "authors": [
+      "kai"
+    ],
+    "languages": [
+      "en",
+      "te",
+      "hi"
+    ],
+    "categories": [
+      "Movie"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/tellybiz.sky"
+  }
+]
