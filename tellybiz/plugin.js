@@ -96,19 +96,19 @@
         const a = card.querySelector("a[href]");
         const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
         if (!href) return null;
-        if (/\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/|loanid)/i.test(href)) return null;
+        if (/\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/)/i.test(href)) return null;
 
         const img = card.querySelector("img");
         const title = cleanTitle(
-            textOf(card.querySelector("h1, h2, h3, .title, .name, .movie-title, .card-title, .post-title, .entry-title")) ||
+            textOf(card.querySelector("h1, h2, h3, .title, .name, .movie-title, .entry-title")) ||
             getAttr(a, "title") ||
             getAttr(img, "alt", "title") ||
             textOf(a)
         );
         if (!title || title.length < 2) return null;
 
-        const posterUrl = normalizeUrl(getAttr(img, "data-src", "data-lazy-src", "src", "data-original", "data-lazy"), manifest.baseUrl);
-        const type = /series|season|episode|web-series|tv/i.test(href + " " + title) ? "series" : "movie";
+        const posterUrl = normalizeUrl(getAttr(img, "data-src", "data-lazy-src", "src", "data-original"), manifest.baseUrl);
+        const type = /series|season|episode|web-series/i.test(href + " " + title) ? "series" : "movie";
 
         return new MultimediaItem({
             title,
@@ -147,111 +147,6 @@
         }
 
         return uniqueByUrl(found);
-    }
-
-    function extractLoanIdLink(doc) {
-        const bodyText = safeText(doc.body?.innerHTML || doc.documentElement?.innerHTML || "");
-        const match = bodyText.match(/loanid\.php\?lid=([a-zA-Z0-9]+)/i);
-        if (match) return `\( {manifest.baseUrl}/loanid.php?lid= \){match[1]}`;
-
-        const links = Array.from(doc.querySelectorAll('a[href*="loanid.php"], a[href*="loanagreement.php"]'));
-        for (const link of links) {
-            const href = getAttr(link, "href");
-            if (href) return resolveUrl(manifest.baseUrl, href);
-        }
-        return "";
-    }
-
-    async function followRedirectChain(startUrl) {
-        let current = startUrl;
-        let attempts = 0;
-        const maxAttempts = 10;
-
-        while (attempts < maxAttempts) {
-            attempts++;
-            const res = await request(current);
-            const body = safeText(res.body || "");
-
-            if (res.headers && res.headers.location) {
-                current = resolveUrl(current, res.headers.location);
-                continue;
-            }
-
-            const meta = body.match(/<meta[^>]*http-equiv=["']refresh["'][^>]*content=["'](\d+);\s*url=([^"']+)["']/i);
-            if (meta) {
-                current = resolveUrl(current, meta[2]);
-                continue;
-            }
-
-            const jsLoc = body.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
-                          body.match(/location\.href\s*=\s*["']([^"']+)["']/i) ||
-                          body.match(/setTimeout.*location\s*=\s*["']([^"']+)["']/i);
-            if (jsLoc) {
-                current = resolveUrl(current, jsLoc[1]);
-                continue;
-            }
-
-            if (/loanagreement\.php/i.test(current) || /<video|<source|player|iframe.*src|file|src=.*m3u8|mp4/i.test(body)) {
-                return { url: current, body, final: true };
-            }
-
-            if (/loanid\.php/i.test(current)) {
-                const lidMatch = current.match(/lid=([a-zA-Z0-9]+)/i);
-                if (lidMatch) {
-                    current = `\( {manifest.baseUrl}/loanagreement.php?lid= \){lidMatch[1]}&f=0`;
-                    continue;
-                }
-            }
-            break;
-        }
-        return { url: current, body: safeText((await request(current)).body || ""), final: true };
-    }
-
-    function extractFinalVideoUrl(html, baseUrl) {
-        const raw = String(html || "")
-            .replace(/\\u002F/g, "/")
-            .replace(/\\u003A/g, ":")
-            .replace(/\\+\//g, "/")
-            .replace(/&amp;/g, "&");
-
-        const candidates = [];
-
-        const m3u8Patterns = [
-            /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/gi,
-            /["']((?:https?:)?\/\/[^"'\s]+?\.m3u8[^"'\s]*)["']/gi,
-            /file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/gi
-        ];
-        for (const p of m3u8Patterns) {
-            let m;
-            while ((m = p.exec(raw)) !== null) {
-                const u = resolveUrl(baseUrl, m[1]);
-                if (/\.m3u8(\?|$)/i.test(u)) candidates.push({ url: u, type: "hls" });
-            }
-        }
-
-        const mp4Patterns = [
-            /(https?:\/\/[^\s"']+\.mp4[^\s"']*)/gi,
-            /["']((?:https?:)?\/\/[^"'\s]+?\.mp4[^"'\s]*)["']/gi,
-            /source\s*[:=]\s*["']([^"']+\.mp4[^"']*)["']/gi
-        ];
-        for (const p of mp4Patterns) {
-            let m;
-            while ((m = p.exec(raw)) !== null) {
-                const u = resolveUrl(baseUrl, m[1]);
-                if (/\.mp4(\?|$)/i.test(u)) candidates.push({ url: u, type: "mp4" });
-            }
-        }
-
-        const iframeMatch = raw.match(/<iframe[^>]+src=["']([^"']+)["']/i);
-        if (iframeMatch) candidates.push({ url: resolveUrl(baseUrl, iframeMatch[1]), type: "iframe" });
-
-        const sourceMatch = raw.match(/<source[^>]+src=["']([^"']+)["']/i);
-        if (sourceMatch) {
-            const u = resolveUrl(baseUrl, sourceMatch[1]);
-            candidates.push({ url: u, type: /\.(m3u8|mp4)/i.test(u) ? (/\.m3u8/i.test(u) ? "hls" : "mp4") : "direct" });
-        }
-
-        return candidates;
     }
 
     async function getHome(cb) {
@@ -363,48 +258,55 @@
 
     async function loadStreams(url, cb) {
         try {
-            let pageUrl = normalizeUrl(url, manifest.baseUrl);
-            let doc = await loadDoc(pageUrl);
+            const pageUrl = normalizeUrl(url, manifest.baseUrl);
+            const doc = await loadDoc(pageUrl);
 
-            let loanidUrl = extractLoanIdLink(doc);
-            if (!loanidUrl) {
-                const bodyText = safeText(doc.body?.innerHTML || "");
-                const fallback = bodyText.match(/loanid\.php\?lid=([a-zA-Z0-9]+)/i);
-                if (fallback) loanidUrl = `\( {manifest.baseUrl}/loanid.php?lid= \){fallback[1]}`;
-            }
+            const candidates = [];
 
-            if (!loanidUrl) return cb({ success: false, errorCode: "NO_LOANID", message: "Could not find loanid link" });
+            // Extract direct video links
+            const m3u8 = doc.querySelectorAll('a[href*=".m3u8"], source[src*=".m3u8"]');
+            const mp4 = doc.querySelectorAll('a[href*=".mp4"], source[src*=".mp4"]');
+            const iframes = Array.from(doc.querySelectorAll('iframe[src]')).map(i => getAttr(i, "src"));
 
-            const redirectResult = await followRedirectChain(loanidUrl);
+            m3u8.forEach(el => {
+                const u = resolveUrl(pageUrl, getAttr(el, "href", "src"));
+                if (/\.m3u8/i.test(u)) candidates.push({ url: u, type: "hls" });
+            });
 
-            const finalHtml = redirectResult.body;
-            const finalBase = redirectResult.url;
+            mp4.forEach(el => {
+                const u = resolveUrl(pageUrl, getAttr(el, "href", "src"));
+                if (/\.mp4/i.test(u)) candidates.push({ url: u, type: "mp4" });
+            });
 
-            const candidates = extractFinalVideoUrl(finalHtml, finalBase);
+            iframes.forEach(src => {
+                const u = resolveUrl(pageUrl, src);
+                candidates.push({ url: u, type: "iframe" });
+            });
 
             const streams = candidates.map(cand => {
-                const name = cand.type === "hls" ? "Tellybiz HLS" : (cand.type === "mp4" ? "Tellybiz MP4" : "Tellybiz Player");
+                const name = cand.type === "hls" ? "5Movierulz HLS" : (cand.type === "mp4" ? "5Movierulz MP4" : "5Movierulz Player");
                 return new StreamResult({
                     name,
                     url: cand.url,
                     quality: cand.type === "hls" ? "Auto" : "HD",
-                    source: `Tellybiz - ${cand.type.toUpperCase()}`,
+                    source: `5Movierulz - ${cand.type.toUpperCase()}`,
                     headers: {
-                        "Referer": finalBase,
+                        "Referer": pageUrl,
                         "User-Agent": UA
                     }
                 });
             });
 
             if (streams.length === 0) {
-                const iframe = finalHtml.match(/<iframe[^>]+src=["']([^"']+)["']/i);
-                if (iframe) {
+                const fallbackIframe = doc.querySelector('iframe[src]');
+                if (fallbackIframe) {
+                    const u = resolveUrl(pageUrl, getAttr(fallbackIframe, "src"));
                     streams.push(new StreamResult({
-                        name: "Tellybiz iframe",
-                        url: resolveUrl(finalBase, iframe[1]),
+                        name: "5Movierulz iframe",
+                        url: u,
                         quality: "Auto",
-                        source: "Tellybiz iframe",
-                        headers: { "Referer": finalBase, "User-Agent": UA }
+                        source: "5Movierulz iframe",
+                        headers: { "Referer": pageUrl, "User-Agent": UA }
                     }));
                 }
             }
