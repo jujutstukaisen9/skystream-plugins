@@ -76,10 +76,6 @@
             .trim();
     }
 
-    function safeText(text) {
-        return String(text || "").trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
-    }
-
     async function request(url, headers = {}) {
         return http_get(url, {
             headers: Object.assign({}, BASE_HEADERS, headers)
@@ -96,19 +92,18 @@
         const a = card.querySelector("a[href]");
         const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
         if (!href) return null;
-        if (/\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/)/i.test(href)) return null;
 
         const img = card.querySelector("img");
         const title = cleanTitle(
-            textOf(card.querySelector("p b, .title, .name, .movie-title, .entry-title")) ||
+            textOf(card.querySelector("p b, p strong, .title, .name, .movie-title")) ||
             getAttr(a, "title") ||
             getAttr(img, "alt", "title") ||
             textOf(a)
         );
-        if (!title || title.length < 2) return null;
+        if (!title || title.length < 3) return null;
 
-        const posterUrl = normalizeUrl(getAttr(img, "data-src", "data-lazy-src", "src", "data-original"), manifest.baseUrl);
-        const type = /series|season|episode|web-series/i.test(href + " " + title) ? "series" : "movie";
+        const posterUrl = normalizeUrl(getAttr(img, "src", "data-src", "data-lazy-src", "data-original"), manifest.baseUrl);
+        const type = /series|season|episode/i.test(href + " " + title) ? "series" : "movie";
 
         return new MultimediaItem({
             title,
@@ -120,10 +115,7 @@
     }
 
     function collectItems(doc) {
-        const selectors = [
-            ".boxed.film", ".film", "li", "article", ".post", ".entry", ".content-item",
-            "div[class*='film']", "div[class*='movie']", "div[class*='card']", "div[class*='item']"
-        ];
+        const selectors = [".boxed.film", ".film", "li", "article", ".post", ".entry"];
         let found = [];
         for (const sel of selectors) {
             const nodes = Array.from(doc.querySelectorAll(sel));
@@ -134,9 +126,10 @@
             if (found.length >= 40) break;
         }
 
-        if (found.length < 10) {
-            const allImages = Array.from(doc.querySelectorAll("a[href] img"));
-            for (const img of allImages) {
+        // Ultra fallback - any poster image
+        if (found.length < 8) {
+            const images = Array.from(doc.querySelectorAll("a[href] img"));
+            for (const img of images) {
                 const a = img.closest("a");
                 if (!a) continue;
                 const card = a.closest("div, li, article") || a;
@@ -144,7 +137,6 @@
                 if (item) found.push(item);
             }
         }
-
         return uniqueByUrl(found);
     }
 
@@ -153,27 +145,6 @@
             const data = {};
             const doc = await loadDoc(manifest.baseUrl);
             let items = collectItems(doc);
-
-            if (items.length === 0) {
-                const rawAnchors = Array.from(doc.querySelectorAll("a[href] img"));
-                for (const img of rawAnchors) {
-                    const a = img.closest("a");
-                    if (!a) continue;
-                    const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
-                    const title = cleanTitle(getAttr(img, "alt") || textOf(a) || getAttr(a, "title"));
-                    const poster = normalizeUrl(getAttr(img, "src", "data-src", "data-lazy-src"), manifest.baseUrl);
-                    if (title && href && poster) {
-                        items.push(new MultimediaItem({
-                            title,
-                            url: href,
-                            posterUrl: poster,
-                            type: "movie",
-                            contentType: "movie"
-                        }));
-                    }
-                }
-                items = uniqueByUrl(items);
-            }
 
             if (items.length > 0) {
                 data["Latest"] = items.slice(0, 40);
@@ -191,7 +162,10 @@
             if (!raw) return cb({ success: true, data: [] });
 
             const q = encodeURIComponent(raw);
-            const doc = await loadDoc(`\( {manifest.baseUrl}/search_movies?s= \){q}`);
+            // Correct search endpoint for this site
+            const searchUrl = `\( {manifest.baseUrl}/search_movies?s= \){q}`;
+            const doc = await loadDoc(searchUrl);
+
             const items = collectItems(doc);
             cb({ success: true, data: uniqueByUrl(items).slice(0, 40) });
         } catch (e) {
@@ -205,37 +179,23 @@
             const doc = await loadDoc(target);
 
             const title = cleanTitle(
-                textOf(doc.querySelector("h1, .title, .movie-title")) ||
+                textOf(doc.querySelector("h1")) ||
                 getAttr(doc.querySelector('meta[property="og:title"]'), "content") ||
                 "Unknown"
             );
 
             const posterUrl = normalizeUrl(
-                getAttr(doc.querySelector('meta[property="og:image"], img'), "content", "data-src", "src"),
+                getAttr(doc.querySelector('meta[property="og:image"], img'), "content", "src", "data-src"),
                 manifest.baseUrl
             );
 
             const description = cleanTitle(
                 getAttr(doc.querySelector('meta[property="og:description"]'), "content") ||
-                textOf(doc.querySelector(".description, .synopsis, p"))
+                textOf(doc.querySelector("p, .description"))
             );
 
             const contentType = /series|season|episode/i.test(target + " " + title) ? "series" : "movie";
             const year = parseYear(`${title} ${description}`);
-
-            const episodes = contentType === "series" 
-                ? Array.from(doc.querySelectorAll("a[href]")).map(a => {
-                    const epUrl = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
-                    if (!/episode|season/i.test(epUrl)) return null;
-                    return new Episode({
-                        name: cleanTitle(textOf(a)) || "Episode",
-                        url: epUrl,
-                        season: 1,
-                        episode: 1,
-                        posterUrl
-                    });
-                }).filter(Boolean)
-                : [new Episode({ name: title, url: target, season: 1, episode: 1, posterUrl })];
 
             const item = new MultimediaItem({
                 title,
@@ -246,7 +206,13 @@
                 type: contentType,
                 contentType,
                 year,
-                episodes: uniqueByUrl(episodes)
+                episodes: [new Episode({
+                    name: title,
+                    url: target,
+                    season: 1,
+                    episode: 1,
+                    posterUrl
+                })]
             });
 
             cb({ success: true, data: item });
@@ -259,30 +225,36 @@
         try {
             const pageUrl = normalizeUrl(url, manifest.baseUrl);
             const doc = await loadDoc(pageUrl);
+            const body = doc.body.innerHTML || "";
 
             const candidates = [];
 
-            const m3u8 = Array.from(doc.querySelectorAll('a[href*=".m3u8"], source[src*=".m3u8"], iframe[src*=".m3u8"]'));
-            const mp4 = Array.from(doc.querySelectorAll('a[href*=".mp4"], source[src*=".mp4"], iframe[src*=".mp4"]'));
+            // Extract from JS locations array (as in your page source)
+            const locationsMatch = body.match(/var locations\s*=\s*\[([^\]]+)\]/i);
+            if (locationsMatch) {
+                const urls = locationsMatch[1].match(/https?:\/\/[^\s,"']+/g) || [];
+                urls.forEach(u => {
+                    const clean = u.replace(/\\u002F/g, "/").replace(/\\u003A/g, ":");
+                    if (clean.includes(".m3u8") || clean.includes("hls")) {
+                        candidates.push({ url: clean, type: "hls" });
+                    } else if (clean.includes(".mp4")) {
+                        candidates.push({ url: clean, type: "mp4" });
+                    } else {
+                        candidates.push({ url: clean, type: "iframe" });
+                    }
+                });
+            }
+
+            // Direct iframe / links
             const iframes = Array.from(doc.querySelectorAll('iframe[src]'));
-
-            m3u8.forEach(el => {
-                const u = resolveUrl(pageUrl, getAttr(el, "href", "src"));
-                if (/\.m3u8/i.test(u)) candidates.push({ url: u, type: "hls" });
-            });
-
-            mp4.forEach(el => {
-                const u = resolveUrl(pageUrl, getAttr(el, "href", "src"));
-                if (/\.mp4/i.test(u)) candidates.push({ url: u, type: "mp4" });
-            });
-
-            iframes.forEach(frame => {
-                const src = getAttr(frame, "src");
+            iframes.forEach(f => {
+                const src = getAttr(f, "src");
                 if (src) candidates.push({ url: resolveUrl(pageUrl, src), type: "iframe" });
             });
 
             const streams = candidates.map(cand => {
-                const name = cand.type === "hls" ? "5Movierulz HLS" : (cand.type === "mp4" ? "5Movierulz MP4" : "5Movierulz Player");
+                const name = cand.type === "hls" ? "5Movierulz HLS" : 
+                            (cand.type === "mp4" ? "5Movierulz MP4" : "5Movierulz Player");
                 return new StreamResult({
                     name,
                     url: cand.url,
@@ -295,15 +267,15 @@
                 });
             });
 
+            // Fallback if nothing found
             if (streams.length === 0) {
-                const fallbackIframe = doc.querySelector('iframe[src]');
-                if (fallbackIframe) {
-                    const u = resolveUrl(pageUrl, getAttr(fallbackIframe, "src"));
+                const anyLink = body.match(/https?:\/\/[^\s"']+\.(m3u8|mp4)[^\s"']*/i);
+                if (anyLink) {
                     streams.push(new StreamResult({
-                        name: "5Movierulz iframe",
-                        url: u,
+                        name: "5Movierulz Auto",
+                        url: anyLink[0],
                         quality: "Auto",
-                        source: "5Movierulz iframe",
+                        source: "5Movierulz Auto",
                         headers: { "Referer": pageUrl, "User-Agent": UA }
                     }));
                 }
