@@ -2,9 +2,9 @@
   {
     "packageName": "delta.tellybiz",
     "name": "Tellybiz",
-    "version": 1,
+    "version": 3,
     "baseUrl": "https://tellybiz.in",
-    "description": "Full SkyStream plugin for tellybiz.in — scrapes homepage sections, supports search, extracts metadata from detail pages, bypasses the 5-second loanid.php → loanagreement.php redirect chain, and resolves final m3u8 / mp4 / iframe streams.",
+    "description": "Exact match to dizigom/lk21 structure for tellybiz.in - homepage posters + search + load + full loanid→loanagreement bypass",
     "authors": [
       "Principal Engineer"
     ],
