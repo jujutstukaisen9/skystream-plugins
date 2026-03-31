@@ -1,10 +1,10 @@
 {
-  "packageName": "delta.tellybiz",
-  "name": "Tellybiz",
-  "version": 3,
-  "baseUrl": "https://tellybiz.in",
-  "description": "Exact match to dizigom/lk21 structure for tellybiz.in - homepage posters + search + load + full loanid→loanagreement bypass",
+  "packageName": "delta.5movierulz",
+  "name": "5Movierulz",
+  "version": 1,
+  "baseUrl": "https://www.5movierulz.army",
+  "description": "SkyStream plugin for 5movierulz.army - exact dizigom/lk21 pattern with broad selectors for Telugu movies",
   "authors": ["Principal Engineer"],
-  "languages": ["en", "hi"],
+  "languages": ["en", "hi", "te"],
   "categories": ["Movie", "TvSeries"]
 }
