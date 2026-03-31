@@ -8,8 +8,7 @@
     const BASE_HEADERS = {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Referer": `${manifest.baseUrl}/`,
-        "Accept-Language": "en-US,en;q=0.9,hi;q=0.8"
+        "Referer": `${manifest.baseUrl}/`
     };
 
     function normalizeUrl(url, base) {
@@ -94,27 +93,22 @@
 
     function parseListItem(card) {
         if (!card) return null;
-
-        // EXTREMELY BROAD selector fallback - works on almost any poster grid
-        const a = card.querySelector("a[href]") || card.querySelector("a");
+        const a = card.querySelector("a[href]");
         const href = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
-        if (!href || /\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/|loanid)/i.test(href)) return null;
+        if (!href) return null;
+        if (/\/(contact|about|privacy|dmca|login|register|search|category|tag|page\/|feed\/|loanid)/i.test(href)) return null;
 
         const img = card.querySelector("img");
         const title = cleanTitle(
-            textOf(card.querySelector("h1, h2, h3, .title, .name, .movie-title, .card-title, .post-title, .entry-title")) ||
+            textOf(card.querySelector("h2, h3, .title, .name, .movie-title")) ||
             getAttr(a, "title") ||
-            getAttr(img, "alt", "title") ||
+            getAttr(img, "alt") ||
             textOf(a)
         );
-        if (!title || title.length < 3) return null;
+        if (!title || title.length < 2) return null;
 
-        const posterUrl = normalizeUrl(
-            getAttr(img, "data-src", "data-lazy-src", "src", "data-original", "data-lazy"),
-            manifest.baseUrl
-        );
-
-        const type = /series|season|episode|web-series|tv/i.test(href + " " + title) ? "series" : "movie";
+        const posterUrl = normalizeUrl(getAttr(img, "data-src", "src", "data-original"), manifest.baseUrl);
+        const type = /series|season|episode|web-series/i.test(href + " " + title) ? "series" : "movie";
 
         return new MultimediaItem({
             title,
@@ -126,11 +120,9 @@
     }
 
     function collectItems(doc) {
-        // ULTRA-BROAD selectors for any kind of poster grid (covers tellybiz.in even if protected/JS-rendered)
         const selectors = [
             ".poster", ".movie-card", ".item", "article", ".thumb", ".grid-item", ".list-item",
-            ".swiper-slide", ".owl-item", ".movie-poster", ".card", ".post", ".entry", 
-            ".tvshow", ".movie", ".block", ".content-item", "div[class*='poster']", "div[class*='movie']"
+            ".swiper-slide", ".owl-item", ".movie-poster", ".card", ".post", ".entry"
         ];
         let found = [];
         for (const sel of selectors) {
@@ -139,36 +131,21 @@
                 const item = parseListItem(node);
                 if (item) found.push(item);
             }
-            if (found.length >= 60) break;
+            if (found.length >= 40) break;
         }
-
-        // LAST RESORT: scrape ANY anchor that has an image inside (works even on minimal HTML)
-        if (found.length < 10) {
-            const allAnchors = Array.from(doc.querySelectorAll("a[href] img")).map(img => img.parentElement || img.closest("a"));
-            for (const a of allAnchors) {
-                const card = a.closest("div, article, li") || a;
-                const item = parseListItem(card);
-                if (item) found.push(item);
-            }
-        }
-
         return uniqueByUrl(found);
     }
 
     function extractLoanIdLink(doc) {
         const bodyText = safeText(doc.body?.innerHTML || doc.documentElement?.innerHTML || "");
-        
-        // Direct loanid.php links
-        let match = bodyText.match(/loanid\.php\?lid=([a-zA-Z0-9]+)/i);
+        const match = bodyText.match(/loanid\.php\?lid=([a-zA-Z0-9]+)/i);
         if (match) return `\( {manifest.baseUrl}/loanid.php?lid= \){match[1]}`;
 
-        // Any anchor containing loanid
         const links = Array.from(doc.querySelectorAll('a[href*="loanid.php"], a[href*="loanagreement.php"]'));
         for (const link of links) {
             const href = getAttr(link, "href");
             if (href) return resolveUrl(manifest.baseUrl, href);
         }
-
         return "";
     }
 
@@ -182,20 +159,17 @@
             const res = await request(current);
             const body = safeText(res.body || "");
 
-            // HTTP redirect
             if (res.headers && res.headers.location) {
                 current = resolveUrl(current, res.headers.location);
                 continue;
             }
 
-            // Meta refresh
             const meta = body.match(/<meta[^>]*http-equiv=["']refresh["'][^>]*content=["'](\d+);\s*url=([^"']+)["']/i);
             if (meta) {
                 current = resolveUrl(current, meta[2]);
                 continue;
             }
 
-            // JS redirects
             const jsLoc = body.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
                           body.match(/location\.href\s*=\s*["']([^"']+)["']/i) ||
                           body.match(/setTimeout.*location\s*=\s*["']([^"']+)["']/i);
@@ -204,12 +178,10 @@
                 continue;
             }
 
-            // Reached final page with video content
             if (/loanagreement\.php/i.test(current) || /<video|<source|player|iframe.*src|file|src=.*m3u8|mp4/i.test(body)) {
                 return { url: current, body, final: true };
             }
 
-            // Fallback construct loanagreement
             if (/loanid\.php/i.test(current)) {
                 const lidMatch = current.match(/lid=([a-zA-Z0-9]+)/i);
                 if (lidMatch) {
@@ -217,7 +189,6 @@
                     continue;
                 }
             }
-
             break;
         }
         return { url: current, body: safeText((await request(current)).body || ""), final: true };
@@ -232,27 +203,30 @@
 
         const candidates = [];
 
-        // m3u8
-        const m3u8Rx = [/(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/gi, /["']((?:https?:)?\/\/[^"'\s]+?\.m3u8[^"'\s]*)["']/gi];
-        for (const rx of m3u8Rx) {
+        const m3u8Patterns = [
+            /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/gi,
+            /["']((?:https?:)?\/\/[^"'\s]+?\.m3u8[^"'\s]*)["']/gi
+        ];
+        for (const p of m3u8Patterns) {
             let m;
-            while ((m = rx.exec(raw)) !== null) {
+            while ((m = p.exec(raw)) !== null) {
                 const u = resolveUrl(baseUrl, m[1]);
                 if (/\.m3u8(\?|$)/i.test(u)) candidates.push({ url: u, type: "hls" });
             }
         }
 
-        // mp4
-        const mp4Rx = [/(https?:\/\/[^\s"']+\.mp4[^\s"']*)/gi, /["']((?:https?:)?\/\/[^"'\s]+?\.mp4[^"'\s]*)["']/gi];
-        for (const rx of mp4Rx) {
+        const mp4Patterns = [
+            /(https?:\/\/[^\s"']+\.mp4[^\s"']*)/gi,
+            /["']((?:https?:)?\/\/[^"'\s]+?\.mp4[^"'\s]*)["']/gi
+        ];
+        for (const p of mp4Patterns) {
             let m;
-            while ((m = rx.exec(raw)) !== null) {
+            while ((m = p.exec(raw)) !== null) {
                 const u = resolveUrl(baseUrl, m[1]);
                 if (/\.mp4(\?|$)/i.test(u)) candidates.push({ url: u, type: "mp4" });
             }
         }
 
-        // iframe
         const iframeMatch = raw.match(/<iframe[^>]+src=["']([^"']+)["']/i);
         if (iframeMatch) candidates.push({ url: resolveUrl(baseUrl, iframeMatch[1]), type: "iframe" });
 
@@ -263,13 +237,11 @@
         try {
             const data = {};
             const doc = await loadDoc(manifest.baseUrl);
-
             const items = collectItems(doc);
 
             if (items.length > 0) {
                 data["Latest"] = uniqueByUrl(items).slice(0, 40);
             } else {
-                // FINAL FALLBACK - raw scrape every possible link with image
                 const rawAnchors = Array.from(doc.querySelectorAll("a[href] img")).map(img => {
                     const a = img.closest("a") || img.parentElement;
                     if (!a) return null;
@@ -290,7 +262,7 @@
                 if (rawAnchors.length > 0) data["Latest"] = uniqueByUrl(rawAnchors).slice(0, 40);
             }
 
-            cb({ success: true, data: Object.keys(data).length ? data : { "Home": [] } });
+            cb({ success: true, data });
         } catch (e) {
             cb({ success: false, errorCode: "PARSE_ERROR", message: String(e?.message || e) });
         }
@@ -316,7 +288,7 @@
             const doc = await loadDoc(target);
 
             const title = cleanTitle(
-                textOf(doc.querySelector("h1, .title, .movie-title")) ||
+                textOf(doc.querySelector("h1")) ||
                 getAttr(doc.querySelector('meta[property="og:title"]'), "content") ||
                 "Unknown"
             );
@@ -335,8 +307,9 @@
             const year = parseYear(`${title} ${description}`);
 
             const episodes = contentType === "series" 
-                ? Array.from(doc.querySelectorAll("a[href*='episode'], a[href*='season'], a[href*='watch']")).map(a => {
+                ? Array.from(doc.querySelectorAll("a[href]")).map(a => {
                     const epUrl = normalizeUrl(getAttr(a, "href"), manifest.baseUrl);
+                    if (!/episode|season/i.test(epUrl)) return null;
                     return new Episode({
                         name: cleanTitle(textOf(a)) || "Episode",
                         url: epUrl,
@@ -379,7 +352,6 @@
 
             if (!loanidUrl) return cb({ success: false, errorCode: "NO_LOANID", message: "Could not find loanid link" });
 
-            // Bypass the full 5-second redirect chain
             const redirectResult = await followRedirectChain(loanidUrl);
 
             const finalHtml = redirectResult.body;
@@ -396,13 +368,11 @@
                     source: `Tellybiz - ${cand.type.toUpperCase()}`,
                     headers: {
                         "Referer": finalBase,
-                        "User-Agent": UA,
-                        "Origin": manifest.baseUrl
+                        "User-Agent": UA
                     }
                 });
             });
 
-            // Extra iframe fallback
             if (streams.length === 0) {
                 const iframe = finalHtml.match(/<iframe[^>]+src=["']([^"']+)["']/i);
                 if (iframe) {
