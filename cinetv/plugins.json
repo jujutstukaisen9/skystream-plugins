@@ -1,0 +1,18 @@
+{
+  "packageName": "com.yourname.cinetv",
+  "name": "CineTV",
+  "version": 1,
+  "baseUrl": "https://i6a6.t9z0.com",
+  "description": "Plugin for CineTV, converted from CloudStream.",
+  "authors": [
+    "YourName"
+  ],
+  "languages": [
+    "ta",
+    "en"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries"
+  ]
+}
