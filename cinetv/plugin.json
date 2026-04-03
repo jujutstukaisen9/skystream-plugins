@@ -1,0 +1,10 @@
+{
+  "packageName": "com.cncverse.cinetv",
+  "name": "CineTv",
+  "version": 1,
+  "baseUrl": "https://i6a6.t9z0.com",
+  "description": "CineTv Provider - Stream Tamil, Telugu, Hindi, Malayalam content",
+  "authors": ["NivinCNC", "Converted for Skystream"],
+  "languages": ["ta", "te", "hi", "ml", "en"],
+  "categories": ["Movie", "TvSeries"]
+}
