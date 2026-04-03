@@ -1,10 +1,18 @@
 {
-  "packageName": "com.dudefilms.skystream",
+  "packageName": "dev.dudefilms.skystream",
   "name": "DudeFilms",
   "version": 1,
-  "baseUrl": "https://dudefilms.sarl",
-  "description": "DudeFilms - Hindi Movies, Web Series, Bollywood, Hollywood & More",
-  "authors": ["Phisher98 (original) → SkyStream Port"],
-  "languages": ["hi"],
-  "categories": ["Movie", "TvSeries"]
+  "baseUrl": "https://dudefilms.llc",
+  "description": "Indian Movies and TV Series - Bollywood, Hollywood, South Indian, Web Series",
+  "authors": [
+    "DudeFilms"
+  ],
+  "languages": [
+    "hi",
+    "en"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries"
+  ]
 }
