@@ -39,25 +39,5 @@
       "Movie"
     ],
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/delta.5movierulz.sky"
-  },
-  {
-    "packageName": "com.g.skystream.scarper",
-    "name": "ScarperApi (Screenscape)",
-    "version": 1,
-    "baseUrl": "https://screenscapeapi.dev",
-    "description": "Full ScarperApi integration for SkyStream (KMMovies movies + NetMirror + AnimeSalt). Requires your personal x-api-key from screenscapeapi.dev/dashboard. Supports movies, series, anime.",
-    "authors": [
-      "G"
-    ],
-    "languages": [
-      "en",
-      "hi"
-    ],
-    "categories": [
-      "Movie",
-      "TvSeries",
-      "Anime"
-    ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.g.skystream.scarper.sky"
   }
 ]
