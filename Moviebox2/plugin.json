@@ -1,0 +1,10 @@
+{
+  "packageName": "com.cncverse.moviebox",
+  "name": "MovieBox2",
+  "version": 1,
+  "baseUrl": "https://api3.aoneroom.com",
+  "description": "Multi Language Movies and Series Provider - Port of CloudStream MovieBoxProvider",
+  "authors": ["NivinCNC", "SkyStream Port"],
+  "languages": ["en", "hi", "ta", "te", "kn", "ml"],
+  "categories": ["Movie", "TvSeries", "Anime", "Bollywood", "Hollywood", "South Indian"]
+}
