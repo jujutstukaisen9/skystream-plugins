@@ -2,29 +2,27 @@
     /**
      * @type {import('@skystream/sdk').Manifest}
      */
-    // manifest is injected at runtime by SkyStream
+    // manifest injected by SkyStream
 
-    const API_BASE = manifest.baseUrl || "https://screenscapeapi.dev";
-    const API_KEY = "sk_1q7Geid8t5WyzPs50tdPrxsvAOSI7Geq";   // <-- YOUR KEY IS HARD-CODED HERE
+    const API_BASE = manifest.baseUrl || "https://screenscapeapi.dev/api";
+    const API_KEY = "sk_1q7Geid8t5WyzPs50tdPrxsvAOSI7Geq";   // hardcoded exactly as you wanted
 
-    function getHeaders() {
-        return {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "x-api-key": API_KEY,
-            "Content-Type": "application/json"
-        };
-    }
+    const HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "x-api-key": API_KEY,
+        "Content-Type": "application/json"
+    };
 
     async function apiGet(path, queryParams = {}) {
-        let url = `\( {API_BASE} \){path}`;
+        let url = API_BASE + path;
         if (Object.keys(queryParams).length > 0) {
             const params = new URLSearchParams(queryParams);
             url += `?${params.toString()}`;
         }
 
-        const res = await http_get(url, getHeaders());
+        const res = await http_get(url, HEADERS);
         if (res.status !== 200) {
-            throw new Error(`API_ERROR: ${res.status} - ${res.body || 'No body'}`);
+            throw new Error(`API_ERROR ${res.status} - ${res.body || 'empty'}`);
         }
         return JSON.parse(res.body || '{}');
     }
@@ -32,21 +30,21 @@
     function toMultimediaItem(item) {
         if (!item) return null;
         return new MultimediaItem({
-            title: item.title || item.name || item.moviename || "Unknown Title",
+            title: item.title || item.name || item.moviename || "Unknown",
             url: item.url || item.link || item.slug || item.id || "",
             posterUrl: item.poster || item.image || item.thumbnail || item.posterImage || "",
             type: (item.type || item.contentType || "").toLowerCase().includes("series") || item.seasons || item.episodes ? "series" : "movie",
-            year: item.year || item.releaseYear || item.airedYear,
-            score: item.rating || item.imdb || item.score || 0,
-            description: item.description || item.storyline || item.plot || "",
+            year: item.year || item.releaseYear,
+            score: item.rating || item.imdb || 0,
+            description: item.description || item.plot || "",
         });
     }
 
     async function getHome(cb) {
         try {
             const [kmmRes, netRes] = await Promise.all([
-                apiGet("/api/kmmovies"),
-                apiGet("/api/netmirror")
+                apiGet("/kmmovies"),
+                apiGet("/netmirror")
             ]);
 
             const kmmItems = (kmmRes.data || kmmRes.results || kmmRes.movies || []).map(toMultimediaItem).filter(Boolean).slice(0, 15);
@@ -68,9 +66,9 @@
     async function search(query, cb) {
         try {
             const [kmmRes, animeRes, netRes] = await Promise.all([
-                apiGet("/api/kmmovies/search", { q: query }),
-                apiGet("/api/animesalt/search", { q: query }),
-                apiGet("/api/netmirror/search", { q: query })
+                apiGet("/kmmovies/search", { q: query }),
+                apiGet("/animesalt/search", { q: query }),
+                apiGet("/netmirror/search", { q: query })
             ]);
 
             const allItems = [
@@ -88,9 +86,9 @@
     async function load(url, cb) {
         try {
             let details;
-            try { details = await apiGet("/api/kmmovies/details", { url: url }); } catch (_) {}
-            if (!details?.title) try { details = await apiGet("/api/animesalt/details", { url: url }); } catch (_) {}
-            if (!details?.title) try { details = await apiGet("/api/netmirror/getpost", { id: url }); } catch (_) {}
+            try { details = await apiGet("/kmmovies/details", { url: url }); } catch (_) {}
+            if (!details?.title) try { details = await apiGet("/animesalt/details", { url: url }); } catch (_) {}
+            if (!details?.title) try { details = await apiGet("/netmirror/getpost", { id: url }); } catch (_) {}
 
             if (!details) throw new Error("No details found");
 
@@ -104,8 +102,7 @@
                         name: ep.title || ep.name || `Episode ${idx + 1}`,
                         url: ep.url || ep.id || url,
                         season: ep.season || 1,
-                        episode: ep.episode || (idx + 1),
-                        description: ep.description || ""
+                        episode: ep.episode || (idx + 1)
                     }));
                 });
                 multimedia.episodes = episodes;
@@ -122,44 +119,25 @@
     async function loadStreams(url, cb) {
         try {
             let streamData;
-            try { streamData = await apiGet("/api/kmmovies/magiclinks", { url: url }); } catch (_) {}
-            if (!streamData) try { streamData = await apiGet("/api/animesalt/stream", { url: url }); } catch (_) {}
-            if (!streamData) try { streamData = await apiGet("/api/netmirror/stream", { id: url }); } catch (_) {}
+            try { streamData = await apiGet("/kmmovies/magiclinks", { url: url }); } catch (_) {}
+            if (!streamData) try { streamData = await apiGet("/animesalt/stream", { url: url }); } catch (_) {}
+            if (!streamData) try { streamData = await apiGet("/netmirror/stream", { id: url }); } catch (_) {}
 
             const streams = [];
 
             if (Array.isArray(streamData)) {
                 streamData.forEach(link => {
-                    if (link.url) {
-                        streams.push(new StreamResult({
-                            url: link.url,
-                            quality: link.quality || link.resolution || "720p",
-                            source: "ScarperApi",
-                            headers: { "Referer": "https://screenscape.me" }
-                        }));
-                    }
+                    if (link.url) streams.push(new StreamResult({ url: link.url, quality: link.quality || "720p", source: "ScarperApi", headers: { "Referer": "https://screenscape.me" } }));
                 });
             } else if (streamData?.links) {
                 streamData.links.forEach(link => {
-                    if (link.url) {
-                        streams.push(new StreamResult({
-                            url: link.url,
-                            quality: link.quality || "720p",
-                            source: "ScarperApi",
-                            headers: { "Referer": "https://screenscape.me" }
-                        }));
-                    }
+                    if (link.url) streams.push(new StreamResult({ url: link.url, quality: link.quality || "720p", source: "ScarperApi", headers: { "Referer": "https://screenscape.me" } }));
                 });
-            } else if (typeof streamData === 'object') {
+            } else if (typeof streamData === "object") {
                 Object.keys(streamData).forEach(key => {
                     const val = streamData[key];
-                    if (typeof val === 'string' && val.startsWith('http')) {
-                        streams.push(new StreamResult({
-                            url: val,
-                            quality: key,
-                            source: "ScarperApi",
-                            headers: { "Referer": "https://screenscape.me" }
-                        }));
+                    if (typeof val === "string" && val.startsWith("http")) {
+                        streams.push(new StreamResult({ url: val, quality: key, source: "ScarperApi", headers: { "Referer": "https://screenscape.me" } }));
                     }
                 });
             }
@@ -170,7 +148,6 @@
         }
     }
 
-    // Export the four required functions
     globalThis.getHome = getHome;
     globalThis.search = search;
     globalThis.load = load;
