@@ -746,7 +746,7 @@
     async function loadStreams(url, cb) {
         try {
             const parts = url.split('|');
-            const originalSubjectId = parts[0].includes('get?subjectId=')
+            const originalSubjectId = parts[0].includes('subjectId=')
                 ? parts[0].match(/subjectId=([^&]+)/)[1]
                 : parts[0].substring(parts[0].lastIndexOf('/') + 1);
             
