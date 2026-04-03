@@ -1,23 +1,5 @@
 [
   {
-    "packageName": "com.cncverse.cinetv",
-    "name": "CineTv",
-    "version": 1,
-    "baseUrl": "https://i6a6.t9z0.com",
-    "description": "CineTv - Full Tamil/Indian movies & TV series provider. Ported from CloudStream CNCVerse extension.",
-    "authors": [
-      "NivinCNC (ported to SkyStream)"
-    ],
-    "languages": [
-      "ta"
-    ],
-    "categories": [
-      "Movies",
-      "TV"
-    ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cncverse.cinetv.sky"
-  },
-  {
     "packageName": "movieblast",
     "name": "MovieBlast",
     "version": 1,
