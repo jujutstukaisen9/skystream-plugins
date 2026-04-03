@@ -1,5 +1,24 @@
 [
   {
+    "packageName": "com.yourname.cinetv",
+    "name": "CineTV",
+    "version": 1,
+    "baseUrl": "https://i6a6.t9z0.com",
+    "description": "Plugin for CineTV, converted from CloudStream.",
+    "authors": [
+      "YourName"
+    ],
+    "languages": [
+      "ta",
+      "en"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.yourname.cinetv.sky"
+  },
+  {
     "packageName": "movieblast",
     "name": "MovieBlast",
     "version": 1,
