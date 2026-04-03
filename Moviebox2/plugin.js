@@ -43,8 +43,11 @@
 
     // MD5 hash function
     function md5(input) {
-        const md5 = require('crypto').createHash('md5');
-        return md5.update(input).digest('hex');
+        const crypto = require('crypto');
+        if (input instanceof Uint8Array) {
+            return crypto.createHash('md5').update(input).digest('hex');
+        }
+        return crypto.createHash('md5').update(input).digest('hex');
     }
 
     // Reverse a string
@@ -89,7 +92,8 @@
         const timestamp = hardcodedTimestamp || Date.now();
         const canonical = buildCanonicalString(method, accept, contentType, url, body, timestamp);
         const secret = useAltKey ? SECRET_KEY_ALT : SECRET_KEY_DEFAULT;
-        const mac = require('crypto').createHmac('md5', Buffer.from(secret));
+        const crypto = require('crypto');
+        const mac = crypto.createHmac('md5', Buffer.from(secret));
         const signature = mac.update(canonical).digest();
         const signatureB64 = Buffer.from(signature).toString('base64');
         return `${timestamp}|2|${signatureB64}`;
@@ -417,7 +421,7 @@
                     const data = JSON.parse(response.body);
                     
                     const items = (data.data?.items || data.data?.subjects || []).map(item => {
-                        const title = (item.title || item.name || '').substringBefore('[').substringBefore('[');
+                        const title = (item.title || item.name || '').split('[')[0].split('(')[0];
                         const id = item.subjectId || item.id;
                         const coverImg = item.cover?.url || item.coverImage?.url;
                         const subjectType = item.subjectType || 1;
@@ -491,7 +495,7 @@
             
             for (const result of (data.data?.results || [])) {
                 for (const subject of result.subjects || []) {
-                    const title = (subject.title || subject.name || '').substringBefore('[');
+                    const title = (subject.title || subject.name || '').split('[')[0].split('(')[0];
                     const id = subject.subjectId;
                     const coverImg = subject.cover?.url;
                     const subjectType = subject.subjectType || 1;
@@ -515,9 +519,9 @@
     // Load media details
     async function load(url, cb) {
         try {
-            const id = url.contains('subjectId=') 
+            const id = url.includes('subjectId=') 
                 ? url.match(/subjectId=([^&]+)/)[1]
-                : url.substringAfterLast('/');
+                : url.substring(url.lastIndexOf('/') + 1);
             
             const finalUrl = `${MAIN_URL}/wefeed-mobile-bff/subject-api/get?subjectId=${id}`;
             const xClientToken = generateXClientToken();
@@ -567,7 +571,7 @@
             const mainData = data.data;
             if (!mainData) throw new Error('No data found');
             
-            const title = (mainData.title || '').substringBefore('[');
+            const title = (mainData.title || '').split('[')[0].split('(')[0];
             const description = mainData.description || '';
             const releaseDate = mainData.releaseDate || '';
             const duration = mainData.duration || '';
@@ -629,13 +633,13 @@
                     const dubId = dub.subjectId;
                     const lanName = dub.lanName;
                     if (dubId && lanName && dubId !== id) {
-                        allSubjectIds.push(dubId);
+                        allSubjectIds.push({ id: dubId, language: lanName });
                     }
                 }
                 
                 const episodeMap = new Map(); // season -> Set<episode>
-                for (const subjectId of allSubjectIds) {
-                    const seasonUrl = `${MAIN_URL}/wefeed-mobile-bff/subject-api/season-info?subjectId=${subjectId}`;
+                for (const subject of allSubjectIds) {
+                    const seasonUrl = `${MAIN_URL}/wefeed-mobile-bff/subject-api/season-info?subjectId=${subject.id || subject}`;
                     const seasonSig = generateXTrSignature('GET', 'application/json', 'application/json', seasonUrl);
                     const seasonHeaders = { ...headers, 'x-tr-signature': seasonSig };
                     
@@ -657,7 +661,7 @@
                             }
                         }
                     } catch (e) {
-                        console.error(`Error fetching season info for ${subjectId}:`, e);
+                        console.error(`Error fetching season info for ${subject}:`, e);
                     }
                 }
                 
@@ -744,7 +748,7 @@
             const parts = url.split('|');
             const originalSubjectId = parts[0].includes('get?subjectId=')
                 ? parts[0].match(/subjectId=([^&]+)/)[1]
-                : parts[0].substringAfterLast('/');
+                : parts[0].substring(parts[0].lastIndexOf('/') + 1);
             
             const season = parts.length > 1 ? parseInt(parts[1]) || 0 : 0;
             const episode = parts.length > 2 ? parseInt(parts[2]) || 0 : 0;
@@ -784,7 +788,8 @@
                     'X-Family-Mode': '0',
                     'X-Content-Mode': '0'
                 }),
-                'x-client-status': '0'
+                'x-client-status': '0',
+                'x-play-mode': '2'
             };
             
             const subjectResponse = await http_get(subjectUrl, subjectHeaders);
@@ -891,98 +896,6 @@
                             if (signCookie) link.headers.Cookie = signCookie;
                             
                             allLinks.push(link);
-                            
-                            // Fetch subtitles
-                            const subLink = `${MAIN_URL}/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=${subjectId}&streamId=${stream.id || 'unknown'}`;
-                            const subXClientToken = generateXClientToken();
-                            const subXTrSignature = generateXTrSignature('GET', '', '', subLink);
-                            
-                            const subHeaders = {
-                                'Authorization': `Bearer ${token}`,
-                                'user-agent': `com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; ${brand}; Build/BP22.250325.006; Cronet/133.0.6876.3)`,
-                                'Accept': '',
-                                'X-Client-Info': JSON.stringify({
-                                    package_name: 'com.community.mbox.in',
-                                    version_name: '3.0.03.0529.03',
-                                    version_code: 50020042,
-                                    os: 'android',
-                                    os_version: '16',
-                                    device_id: DEVICE_ID,
-                                    install_store: 'ps',
-                                    gaid: 'd7578036d13336cc',
-                                    brand: 'google',
-                                    model: brand,
-                                    system_language: 'en',
-                                    net: 'NETWORK_WIFI',
-                                    region: 'IN',
-                                    timezone: 'Asia/Calcutta',
-                                    sp_code: ''
-                                }),
-                                'X-Client-Status': '0',
-                                'Content-Type': '',
-                                'X-Client-Token': subXClientToken,
-                                'x-tr-signature': subXTrSignature
-                            };
-                            
-                            try {
-                                const subResponse = await http_get(subLink, subHeaders);
-                                const subRoot = JSON.parse(subResponse.body);
-                                const extCaptions = subRoot.data?.extCaptions || [];
-                                
-                                for (const caption of extCaptions) {
-                                    const captionUrl = caption.url;
-                                    const lang = caption.language || caption.lanName || caption.lan || 'Unknown';
-                                    // Add subtitle callback here
-                                }
-                            } catch (e) {
-                                console.error(`Error fetching subtitles for ${subjectId}:`, e);
-                            }
-                            
-                            // Additional subtitle endpoint
-                            const subLink1 = `${MAIN_URL}/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=${subjectId}&resourceId=${stream.id || 'unknown'}&episode=0`;
-                            const subXClientToken1 = generateXClientToken();
-                            const subXTrSignature1 = generateXTrSignature('GET', '', '', subLink1);
-                            
-                            const subHeaders1 = {
-                                'Authorization': `Bearer ${token}`,
-                                'User-Agent': `com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; ${brand}; Build/BP22.250325.006; Cronet/133.0.6876.3)`,
-                                'Accept': '',
-                                'X-Client-Info': JSON.stringify({
-                                    package_name: 'com.community.mbox.in',
-                                    version_name: '3.0.03.0529.03',
-                                    version_code: 50020042,
-                                    os: 'android',
-                                    os_version: '16',
-                                    device_id: DEVICE_ID,
-                                    install_store: 'ps',
-                                    gaid: 'd7578036d13336cc',
-                                    brand: 'google',
-                                    model: brand,
-                                    system_language: 'en',
-                                    net: 'NETWORK_WIFI',
-                                    region: 'IN',
-                                    timezone: 'Asia/Calcutta',
-                                    sp_code: ''
-                                }),
-                                'X-Client-Status': '0',
-                                'Content-Type': '',
-                                'X-Client-Token': subXClientToken1,
-                                'x-tr-signature': subXTrSignature1
-                            };
-                            
-                            try {
-                                const subResponse1 = await http_get(subLink1, subHeaders1);
-                                const subRoot1 = JSON.parse(subResponse1.body);
-                                const extCaptions1 = subRoot1.data?.extCaptions || [];
-                                
-                                for (const caption of extCaptions1) {
-                                    const captionUrl = caption.url;
-                                    const lang = caption.language || caption.lanName || caption.lan || 'Unknown';
-                                    // Add subtitle callback here
-                                }
-                            } catch (e) {
-                                console.error(`Error fetching extra captions for ${subjectId}:`, e);
-                            }
                         }
                         
                         // Fallback for streams not found
