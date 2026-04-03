@@ -1,1129 +1,892 @@
 /**
  * DudeFilms SkyStream Plugin
- * Ported from CloudStream Kotlin extension
+ * Ported from CloudStream Kotlin provider by phisher98
  *
- * Features:
- * - Homepage categories (Bollywood, Hollywood, South Indian, Gujarati, Web Series)
- * - Search functionality
- * - IMDB/Cinemeta metadata enrichment
- * - Series episode extraction
- * - Multiple stream extractors (HubCloud, GDFlix, Pixeldrain, etc.)
+ * Source: https://github.com/phisher98/cloudstream-extensions-phisher/tree/master/DudeFilms
+ *
+ * Implements:
+ *  - getHomePage()   ← getMainPage()
+ *  - search()        ← search()
+ *  - load()          ← load()
+ *  - loadLinks()     ← loadLinks()
+ *  - Extractors      ← Extractors.kt + Utils.kt
  */
 
-(function() {
-    'use strict';
+"use strict";
 
-    // ============================================================================
-    // CONSTANTS
-    // ============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
 
-    const CINEMETA_URL = 'https://v3-cinemeta.strem.io/meta';
-    const IMDB_BASE_URL = 'https://v3-cinemeta.strem.io/meta';
+const BASE_URL = "https://dudefilms.llc";
+const TMDB_API_KEY = "98ae14df2b8d8f8f8136499daf79f0e0"; // optional: set via plugin settings for TMDB enrichment
 
-    const DEFAULT_HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br'
-    };
+// Homepage category definitions ← mainPage list in dudefilms.kt
+const HOME_SECTIONS = [
+  { name: "Latest Movies",        path: "/category/movies/page/",    type: "movie" },
+  { name: "Latest Web Series",    path: "/category/web-series/page/", type: "tv"    },
+  { name: "Bollywood Movies",     path: "/category/bollywood/page/",  type: "movie" },
+  { name: "South Indian Dubbed",  path: "/category/south-indian-hindi-dubbed/page/", type: "movie" },
+  { name: "Hollywood Dubbed",     path: "/category/hollywood-hindi-dubbed/page/",    type: "movie" },
+  { name: "Netflix Series",       path: "/category/netflix/page/",    type: "tv"    },
+  { name: "Amazon Prime",         path: "/category/amazon-prime/page/", type: "tv"  },
+];
 
-    const STREAM_HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    };
+// Known video-host patterns and their resolver strategies ← Extractors.kt
+const EXTRACTOR_PATTERNS = [
+  { pattern: /speedostream|speedo/i,     resolver: resolveSpeedostream },
+  { pattern: /doodstream|dood\./i,       resolver: resolveDoodstream   },
+  { pattern: /streamtape/i,             resolver: resolveStreamtape   },
+  { pattern: /voe\.sx|voe\./i,           resolver: resolveVoe          },
+  { pattern: /filemoon|moonplayer/i,     resolver: resolveFilemoon     },
+  { pattern: /streamhub/i,              resolver: resolveStreamhub    },
+  { pattern: /mixdrop/i,                resolver: resolveMixdrop      },
+];
 
-    // Quality patterns for extraction
-    const QUALITY_PATTERNS = [
-        { pattern: /\b(2160p|4k|uhd|ds4k)\b/i, quality: '4K' },
-        { pattern: /\b(1440p|qhd)\b/i, quality: '1440p' },
-        { pattern: /\b(1080p|fullhd|fhd)\b/i, quality: '1080p' },
-        { pattern: /\b(720p|hd)\b/i, quality: '720p' },
-        { pattern: /\b(480p|sd)\b/i, quality: '480p' },
-        { pattern: /\b(360p)\b/i, quality: '360p' }
-    ];
+// Default fetch headers ← CloudStream app.get() default headers
+const DEFAULT_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "Chrome/124.0.0.0 Safari/537.36",
+  "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+};
 
-    // Blocked content patterns
-    const BLOCKED_PATTERNS = ['zipfile', 'torrent', 'rar', '7z', 'zip', 'magnet'];
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILITY HELPERS  ← Utils.kt
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // ============================================================================
-    // UTILITY FUNCTIONS
-    // ============================================================================
+/**
+ * Ensure URL is absolute.
+ * Mirrors CloudStream fixUrl() / fixUrlNull().
+ */
+function fixUrl(url, base = BASE_URL) {
+  if (!url) return null;
+  url = url.trim();
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("//")) return "https:" + url;
+  if (url.startsWith("/")) return base.replace(/\/$/, "") + url;
+  return base.replace(/\/$/, "") + "/" + url;
+}
 
-    /**
-     * Decode HTML entities
-     */
-    function decodeHtml(html) {
-        if (!html) return '';
-        return html
-            .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .replace(/&#x27;/g, "'");
+/**
+ * Decode base64 string safely (works in both Node and browser contexts).
+ */
+function safeAtob(str) {
+  try {
+    if (typeof atob === "function") return atob(str);
+    return Buffer.from(str, "base64").toString("utf-8");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Extract first regex capture group or return null.
+ * Mirrors Kotlin's Regex.find()?.groupValues?.get(1)
+ */
+function regexFind(pattern, text, group = 1) {
+  const match = text.match(pattern);
+  return match ? match[group] || null : null;
+}
+
+/**
+ * Extract all matches for a regex capture group.
+ * Mirrors Kotlin's Regex.findAll()
+ */
+function regexFindAll(pattern, text, group = 1) {
+  const re = new RegExp(pattern.source || pattern, "g");
+  const results = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m[group] !== undefined) results.push(m[group]);
+  }
+  return results;
+}
+
+/**
+ * Parse quality hint from title/URL string.
+ * Mirrors Utils.getQuality()
+ */
+function parseQuality(text) {
+  if (!text) return "Unknown";
+  const t = text.toUpperCase();
+  if (/2160P|4K|UHD/.test(t)) return "4K";
+  if (/1080P|FHD|FULL.?HD/.test(t)) return "1080p";
+  if (/720P|HD/.test(t)) return "720p";
+  if (/480P/.test(t)) return "480p";
+  if (/360P/.test(t)) return "360p";
+  return "Unknown";
+}
+
+/**
+ * Clean title by removing quality/format tags.
+ * Mirrors Utils.cleanTitle()
+ */
+function cleanTitle(raw) {
+  if (!raw) return "";
+  return raw
+    .replace(/\(?\d{4}\)?/, "")            // year
+    .replace(/\b(480p|720p|1080p|4K|HDRip|WEB-DL|BluRay|DVDRip)\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Extract year from a string.
+ */
+function extractYear(text) {
+  const m = text && text.match(/\b(19|20)\d{2}\b/);
+  return m ? parseInt(m[0], 10) : null;
+}
+
+/**
+ * Build a normalized media card from raw DOM data.
+ * Mirrors SearchResponse / MovieSearchResponse construction.
+ */
+function buildMediaCard({ title, url, poster, type, year, rating }) {
+  return {
+    title:  cleanTitle(title) || title,
+    url:    fixUrl(url),
+    poster: fixUrl(poster),
+    type:   type || "movie",
+    year:   year || null,
+    rating: rating || null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Wrapped fetch with merged default headers and error safety.
+ * Mirrors CloudStream app.get() / app.post()
+ */
+async function httpGet(url, extraHeaders = {}) {
+  const headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders);
+  const response = await skystream.fetch(url, { method: "GET", headers });
+  return response;
+}
+
+async function httpPost(url, data = {}, extraHeaders = {}) {
+  const headers = Object.assign({}, DEFAULT_HEADERS, {
+    "Content-Type": "application/x-www-form-urlencoded",
+  }, extraHeaders);
+  const body = typeof data === "string" ? data :
+    Object.entries(data).map(([k, v]) =>
+      encodeURIComponent(k) + "=" + encodeURIComponent(v)
+    ).join("&");
+  const response = await skystream.fetch(url, { method: "POST", headers, body });
+  return response;
+}
+
+/**
+ * Fetch and parse HTML DOM.
+ * Mirrors app.get(url).document
+ */
+async function fetchDoc(url, extraHeaders = {}) {
+  const res = await httpGet(url, extraHeaders);
+  return skystream.parseHTML(res.body || res.text || res);
+}
+
+/**
+ * Fetch text body.
+ */
+async function fetchText(url, extraHeaders = {}) {
+  const res = await httpGet(url, extraHeaders);
+  return res.body || res.text || res || "";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTML PARSING HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse article/post cards from a listing page DOM.
+ * Mirrors dudefilms.kt toSearchResult() / toResult()
+ * Selector matches WordPress theme used by DudeFilms.
+ */
+function parseMediaCards(doc) {
+  const cards = [];
+  // Primary selector: WordPress loop articles
+  const items = doc.querySelectorAll("article.post, div.post-item, div.item");
+  items.forEach((el) => {
+    try {
+      const anchor   = el.querySelector("a[href]");
+      const imgEl    = el.querySelector("img");
+      const titleEl  = el.querySelector(".entry-title, h2, h3, .title");
+      const ratingEl = el.querySelector(".rating, .imdb-rating, span.gmr-rating");
+      const yearEl   = el.querySelector(".gmr-meta-date, .year, time");
+
+      const url    = anchor ? anchor.getAttribute("href") : null;
+      const poster = imgEl
+        ? (imgEl.getAttribute("data-src") ||
+           imgEl.getAttribute("data-lazy-src") ||
+           imgEl.getAttribute("src"))
+        : null;
+      const title  = titleEl ? titleEl.textContent.trim() : (anchor ? anchor.textContent.trim() : "");
+      const rating = ratingEl ? ratingEl.textContent.trim().replace(/[^\d.]/g, "") : null;
+      const yearText = yearEl ? yearEl.textContent.trim() : title;
+      const year   = extractYear(yearText);
+
+      // Determine type from URL / category hint
+      const type   = url && /series|season|episode|tv/i.test(url) ? "tv" : "movie";
+
+      if (url && title) {
+        cards.push(buildMediaCard({ title, url, poster, type, year, rating }));
+      }
+    } catch (_) { /* skip malformed card */ }
+  });
+  return cards;
+}
+
+/**
+ * Parse episode list from a TV show detail page.
+ * Mirrors TvSeriesLoadResponse episode list construction.
+ */
+function parseEpisodes(doc, showUrl) {
+  const episodes = [];
+  // DudeFilms uses accordion / season tabs with episode links
+  const seasonBlocks = doc.querySelectorAll(
+    ".gmr-listseries, .series-list, .episodelist, ul.episodios"
+  );
+
+  let seasonNum = 1;
+  seasonBlocks.forEach((block) => {
+    // Try to detect season number from heading
+    const heading = block.previousElementSibling || block.querySelector("h2, h3, .season-title");
+    if (heading) {
+      const sMatch = heading.textContent.match(/season\s*(\d+)/i);
+      if (sMatch) seasonNum = parseInt(sMatch[1], 10);
     }
 
-    /**
-     * Clean and fix URL
-     */
-    function fixUrl(url, base) {
-        if (!url) return '';
-        if (url.startsWith('//')) {
-            return 'https:' + url;
-        }
-        if (url.startsWith('/')) {
-            return (base || manifest.baseUrl) + url;
-        }
-        if (!url.startsWith('http')) {
-            return (base || manifest.baseUrl) + '/' + url;
-        }
-        return url;
-    }
-
-    /**
-     * Extract quality from text
-     */
-    function getQuality(text) {
-        if (!text) return 'Auto';
-        const lower = text.toLowerCase();
-        for (const { pattern, quality } of QUALITY_PATTERNS) {
-            if (pattern.test(lower)) {
-                return quality;
-            }
-        }
-        return 'Auto';
-    }
-
-    /**
-     * Clean title by removing season/episode info for movies
-     */
-    function cleanTitle(raw) {
-        if (!raw) return '';
-        const trimmed = raw.trim();
-        // Keep the full title including season/episode for display
-        return trimmed;
-    }
-
-    /**
-     * Parse episode number from text
-     */
-    function parseEpisodeNumber(text) {
-        if (!text) return null;
-        const patterns = [
-            /(?:Episode|Ep|E)\s*(\d+)/i,
-            /(\d+)\s*(?:Episode|Ep)/i,
-            /S\d+E(\d+)/i,
-            /E(\d+)/i
-        ];
-        for (const pattern of patterns) {
-            const match = text.match(pattern);
-            if (match) {
-                return parseInt(match[1], 10);
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Parse season number from text
-     */
-    function parseSeasonNumber(text) {
-        if (!text) return 1;
-        const patterns = [
-            /(?:Season|S)\s*(\d+)/i,
-            /S(\d+)/i
-        ];
-        for (const pattern of patterns) {
-            const match = text.match(pattern);
-            if (match) {
-                return parseInt(match[1], 10);
-            }
-        }
-        return 1;
-    }
-
-    /**
-     * Check if button should be blocked
-     */
-    function isBlockedButton(element) {
-        const text = (element.querySelector('span.mb-text')?.textContent ||
-                      element.textContent || '').toLowerCase();
-        return BLOCKED_PATTERNS.some(blocked => text.includes(blocked));
-    }
-
-    /**
-     * Safe JSON parse
-     */
-    function safeParse(jsonStr) {
-        if (!jsonStr) return null;
-        if (typeof jsonStr === 'object') return jsonStr;
-        try {
-            return JSON.parse(jsonStr);
-        } catch (e) {
-            return null;
-        }
-    }
-
-    /**
-     * Extract IMDB ID from URL
-     */
-    function extractImdbId(url) {
-        if (!url) return null;
-        const match = url.match(/imdb\.com\/title\/(tt\d+)/i);
-        return match ? match[1] : null;
-    }
-
-    /**
-     * Get content type from URL/title
-     */
-    function getContentType(title, url) {
-        const t = (title || '').toLowerCase();
-        const u = (url || '').toLowerCase();
-        const isSeries = t.includes('series') ||
-                         t.includes('season') ||
-                         u.includes('/series/') ||
-                         u.includes('/tv/') ||
-                         u.includes('-season-') ||
-                         u.includes('-series-');
-        return isSeries ? 'series' : 'movie';
-    }
-
-    /**
-     * Format file size
-     */
-    function formatSize(bytes) {
-        if (!bytes || bytes === 0) return '';
-        if (bytes < 1024 * 1024) {
-            return (bytes / 1024).toFixed(2) + ' KB';
-        }
-        if (bytes < 1024 * 1024 * 1024) {
-            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-        }
-        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
-    }
-
-    // ============================================================================
-    // IMDB/CINEMETA ENRICHMENT
-    // ============================================================================
-
-    /**
-     * Fetch metadata from Cinemeta
-     */
-    async function fetchCinemetaData(imdbId, type) {
-        if (!imdbId) return null;
-        try {
-            const url = `${CINEMETA_URL}/${type}/${imdbId}.json`;
-            const res = await http_get(url, DEFAULT_HEADERS);
-            if (res.status === 200 && res.body) {
-                const data = safeParse(res.body);
-                if (data && data.meta) {
-                    return data.meta;
-                }
-            }
-        } catch (e) {
-            console.error('Cinemeta fetch error:', e.message);
-        }
-        return null;
-    }
-
-    /**
-     * Get TMDB poster image
-     */
-    async function getTmdbPoster(tmdbId, type) {
-        if (!tmdbId) return null;
-        try {
-            const apiKey = '98ae14df2b8d8f8f8136499daf79f0e0';
-            const url = `https://api.themoviedb.org/3/${type === 'movie' ? 'movie' : 'tv'}/${tmdbId}/images?api_key=${apiKey}`;
-            const res = await http_get(url);
-            if (res.status === 200) {
-                const data = safeParse(res.body);
-                if (data && data.posters && data.posters.length > 0) {
-                    const poster = data.posters.find(p => p.iso_639_1 === 'en') || data.posters[0];
-                    return `https://image.tmdb.org/t/p/w500${poster.file_path}`;
-                }
-            }
-        } catch (e) {
-            console.error('TMDB fetch error:', e.message);
-        }
-        return null;
-    }
-
-    // ============================================================================
-    // SEARCH RESULT PARSING
-    // ============================================================================
-
-    /**
-     * Convert DOM element to MultimediaItem
-     */
-    async function toSearchResult(element) {
-        try {
-            const link = element.querySelector('h3 a') || element.querySelector('a');
-            if (!link) return null;
-
-            const href = link.getAttribute('href');
-            if (!href) return null;
-
-            const titleEl = element.querySelector('h3') || link;
-            const title = cleanTitle(titleEl.textContent || 'No Title');
-
-            const imgEl = element.querySelector('img');
-            let poster = imgEl?.getAttribute('data-src') ||
-                         imgEl?.getAttribute('data-lazy-src') ||
-                         imgEl?.getAttribute('src') || '';
-
-            // Handle lazy-loaded images
-            if (poster.startsWith('data:image')) {
-                poster = imgEl?.getAttribute('data-src') || '';
-            }
-
-            // Fix poster URL
-            if (poster && !poster.startsWith('http')) {
-                poster = poster.startsWith('//') ? 'https:' + poster : fixUrl(poster);
-            }
-
-            const contentType = getContentType(title, href);
-
-            return new MultimediaItem({
-                title: title,
-                url: fixUrl(href),
-                posterUrl: poster,
-                type: contentType,
-                quality: getQuality(title)
-            });
-        } catch (e) {
-            console.error('Error parsing search result:', e.message);
-            return null;
-        }
-    }
-
-    // ============================================================================
-    // STREAM EXTRACTORS
-    // ============================================================================
-
-    /**
-     * Extract from HubCloud
-     */
-    async function extractHubCloud(url, referer, streams) {
-        try {
-            const headers = { ...STREAM_HEADERS, 'Referer': referer || url };
-            const res = await http_get(url, headers);
-            if (res.status !== 200) return;
-
-            const doc = await parseHtml(res.body);
-            const sizeEl = doc.querySelector('i#size');
-            const headerEl = doc.querySelector('div.card-header');
-
-            const size = sizeEl?.textContent?.trim() || '';
-            const header = headerEl?.textContent?.trim() || '';
-            const quality = getQuality(header) || 'Auto';
-
-            const labelExtras = header ? `[${header}]` : '';
-            const sizeExtras = size ? `[${size}]` : '';
-
-            const buttons = await doc.querySelectorAll('a.btn');
-            for (const btn of buttons) {
-                const link = btn.getAttribute('href');
-                const text = (btn.textContent || '').toLowerCase().trim();
-
-                if (!link || !text) continue;
-
-                if (text.includes('fsl server') || text.includes('fslv2')) {
-                    streams.push(new StreamResult({
-                        url: link,
-                        source: `HubCloud FSL`,
-                        quality: quality,
-                        headers: headers
-                    }));
-                } else if (text.includes('download file')) {
-                    streams.push(new StreamResult({
-                        url: link,
-                        source: `HubCloud Direct`,
-                        quality: quality,
-                        headers: headers
-                    }));
-                } else if (text.includes('buzzserver')) {
-                    await extractBuzzServer(link + '/download', url, streams, quality, headers);
-                } else if (text.includes('pixeldra') || text.includes('pixeldrain') || text.includes('pixel')) {
-                    await extractPixelDrain(link, streams, quality);
-                } else if (text.includes('s3 server')) {
-                    streams.push(new StreamResult({
-                        url: link,
-                        source: `HubCloud S3`,
-                        quality: quality,
-                        headers: headers
-                    }));
-                } else if (text.includes('mega server')) {
-                    streams.push(new StreamResult({
-                        url: link,
-                        source: `HubCloud Mega`,
-                        quality: quality,
-                        headers: headers
-                    }));
-                }
-            }
-        } catch (e) {
-            console.error('HubCloud extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Extract from BuzzServer
-     */
-    async function extractBuzzServer(url, referer, streams, quality, baseHeaders) {
-        try {
-            const headers = { ...baseHeaders, 'Referer': referer };
-            const res = await http_get(url, headers);
-
-            const redirect = res.headers?.['hx-redirect'] ||
-                           res.headers?.['HX-Redirect'] ||
-                           res.headers?.['location'];
-
-            if (redirect) {
-                streams.push(new StreamResult({
-                    url: redirect,
-                    source: `BuzzServer`,
-                    quality: quality,
-                    headers: headers
-                }));
-            }
-        } catch (e) {
-            console.error('BuzzServer extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Extract from PixelDrain
-     */
-    async function extractPixelDrain(url, streams, quality) {
-        try {
-            const idMatch = url.match(/\/(?:u\/|api\/file\/)([a-zA-Z0-9]+)/);
-            if (!idMatch) return;
-
-            const id = idMatch[1];
-            streams.push(new StreamResult({
-                url: `https://pixeldrain.com/api/file/${id}?download`,
-                source: `PixelDrain`,
-                quality: quality,
-                headers: STREAM_HEADERS
-            }));
-        } catch (e) {
-            console.error('PixelDrain extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Extract from GDFlix
-     */
-    async function extractGDFlix(url, streams) {
-        try {
-            // Handle redirect
-            let finalUrl = url;
-            const res = await http_get(url, STREAM_HEADERS);
-            const doc = await parseHtml(res.body);
-
-            // Check for meta refresh redirect
-            const metaRefresh = doc.querySelector('meta[http-equiv="refresh"]');
-            if (metaRefresh) {
-                const content = metaRefresh.getAttribute('content') || '';
-                const urlMatch = content.match(/url=([^;]+)/);
-                if (urlMatch) {
-                    finalUrl = urlMatch[1];
-                }
-            }
-
-            // Get file info
-            const nameEl = doc.querySelector('ul > li.list-group-item:contains(Name)');
-            const sizeEl = doc.querySelector('ul > li.list-group-item:contains(Size)');
-
-            const fileName = nameEl?.textContent?.split('Name : ')[1]?.trim() || '';
-            const fileSize = sizeEl?.textContent?.split('Size : ')[1]?.trim() || '';
-            const quality = getQuality(fileName);
-
-            // Extract download links
-            const links = await doc.querySelectorAll('div.text-center a');
-            for (const link of links) {
-                const text = (link.textContent || '').toLowerCase();
-                const href = link.getAttribute('href');
-
-                if (!href) continue;
-
-                if (text.includes('direct dl') || text.includes('direct')) {
-                    streams.push(new StreamResult({
-                        url: href,
-                        source: `GDFlix Direct [${fileSize}]`,
-                        quality: quality,
-                        headers: STREAM_HEADERS
-                    }));
-                } else if (text.includes('index links')) {
-                    await extractGDFlixIndex(href, streams, quality, fileSize);
-                } else if (text.includes('drivebot')) {
-                    await extractDriveBot(href, streams, quality, fileSize);
-                } else if (text.includes('instant dl')) {
-                    const instantRes = await http_get(href, { ...STREAM_HEADERS, 'AllowRedirects': 'false' });
-                    const instantRedirect = instantRes.headers?.['location']?.split('url=')[1];
-                    if (instantRedirect) {
-                        streams.push(new StreamResult({
-                            url: instantRedirect,
-                            source: `GDFlix Instant [${fileSize}]`,
-                            quality: quality,
-                            headers: STREAM_HEADERS
-                        }));
-                    }
-                } else if (text.includes('pixeldrain') || text.includes('pixel')) {
-                    await extractPixelDrain(href, streams, quality);
-                } else if (text.includes('gofile')) {
-                    await extractGoFile(href, streams, quality);
-                }
-            }
-
-            // Cloudflare backup
-            try {
-                const cfUrl = finalUrl.replace('/file/', '/wfile/');
-                const cfRes = await http_get(cfUrl + '?type=1', STREAM_HEADERS);
-                const cfDoc = await parseHtml(cfRes.body);
-                const cfLink = cfDoc.querySelector('a.btn-success')?.getAttribute('href');
-                if (cfLink) {
-                    streams.push(new StreamResult({
-                        url: cfLink,
-                        source: `GDFlix CF [${fileSize}]`,
-                        quality: quality,
-                        headers: STREAM_HEADERS
-                    }));
-                }
-            } catch (e) {
-                // Ignore CF errors
-            }
-        } catch (e) {
-            console.error('GDFlix extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Extract GDFlix Index Links
-     */
-    async function extractGDFlixIndex(url, streams, quality, fileSize) {
-        try {
-            const baseUrl = url.includes('gdflix.dad') ? 'https://new6.gdflix.dad' : '';
-            const res = await http_get(url, STREAM_HEADERS);
-            const doc = await parseHtml(res.body);
-
-            const buttons = await doc.querySelectorAll('a.btn-outline-info');
-            for (const btn of buttons) {
-                const serverUrl = baseUrl + btn.getAttribute('href');
-                try {
-                    const serverRes = await http_get(serverUrl, STREAM_HEADERS);
-                    const serverDoc = await parseHtml(serverRes.body);
-                    const sourceLink = serverDoc.querySelector('div.mb-4 > a')?.getAttribute('href');
-                    if (sourceLink) {
-                        streams.push(new StreamResult({
-                            url: sourceLink,
-                            source: `GDFlix Index [${fileSize}]`,
-                            quality: quality,
-                            headers: STREAM_HEADERS
-                        }));
-                    }
-                } catch (e) {
-                    // Skip failed servers
-                }
-            }
-        } catch (e) {
-            console.error('GDFlix Index error:', e.message);
-        }
-    }
-
-    /**
-     * Extract DriveBot links
-     */
-    async function extractDriveBot(url, streams, quality, fileSize) {
-        try {
-            const baseUrls = ['https://drivebot.sbs', 'https://drivebot.cfd'];
-            const idMatch = url.match(/id=([^&]+)/);
-            const doMatch = url.match(/do=([^&]+)/);
-
-            if (!idMatch || !doMatch) return;
-
-            const id = idMatch[1];
-            const doId = doMatch[1];
-
-            for (const baseUrl of baseUrls) {
-                try {
-                    const botUrl = `${baseUrl}/download?id=${id}&do=${doId}`;
-                    const botRes = await http_get(botUrl, STREAM_HEADERS);
-
-                    if (botRes.status === 200) {
-                        const botDoc = await parseHtml(botRes.body);
-                        const tokenMatch = botDoc.toString().match(/formData\.append\('token', '([a-f0-9]+)'\)/);
-                        const postIdMatch = botDoc.toString().match(/fetch\('\/download\?id=([a-zA-Z0-9/+]+)'\)/);
-
-                        if (tokenMatch && postIdMatch) {
-                            const token = tokenMatch[1];
-                            const postId = postIdMatch[1];
-
-                            // Post to get final URL
-                            const postRes = await http_post(
-                                `${baseUrl}/download?id=${postId}`,
-                                { ...STREAM_HEADERS, 'Referer': botUrl },
-                                `token=${token}`
-                            );
-
-                            const urlMatch = postRes.body.match(/"url":"([^"]+)"/);
-                            if (urlMatch) {
-                                const finalUrl = urlMatch[1].replace(/\\/g, '');
-                                streams.push(new StreamResult({
-                                    url: finalUrl,
-                                    source: `GDFlix DriveBot [${fileSize}]`,
-                                    quality: quality,
-                                    headers: { ...STREAM_HEADERS, 'Referer': baseUrl }
-                                }));
-                            }
-                        }
-                    }
-                } catch (e) {
-                    // Try next base URL
-                }
-            }
-        } catch (e) {
-            console.error('DriveBot extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Extract from GoFile
-     */
-    async function extractGoFile(url, streams, quality) {
-        try {
-            // Get server from GoFile
-            const serverRes = await http_get('https://api.gofile.io/servers');
-            const serverData = safeParse(serverRes.body);
-
-            if (!serverData || serverData.status !== 'ok') return;
-
-            const server = serverData.data?.servers?.[0]?.name;
-            if (!server) return;
-
-            // Extract file ID from URL
-            const idMatch = url.match(/\/(?:d\/|\\?c=)([a-zA-Z0-9-]+)/);
-            if (!idMatch) return;
-            const fileId = idMatch[1];
-
-            // Get file content
-            const contentRes = await http_get(
-                `https://${server}.gofile.io/contents/${fileId}`,
-                { ...STREAM_HEADERS, 'Accept': 'application/json' }
-            );
-            const contentData = safeParse(contentRes.body);
-
-            if (contentData && contentData.data) {
-                const children = contentData.data.children || {};
-                for (const file of Object.values(children)) {
-                    if (file.type === 'file' && file.link) {
-                        streams.push(new StreamResult({
-                            url: file.link,
-                            source: `GoFile - ${file.name}`,
-                            quality: getQuality(file.name),
-                            headers: STREAM_HEADERS
-                        }));
-                    }
-                }
-            }
-        } catch (e) {
-            console.error('GoFile extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Extract from HUBCDN
-     */
-    async function extractHubCdn(url, streams) {
-        try {
-            const res = await http_get(url, STREAM_HEADERS);
-            if (res.status !== 200) return;
-
-            const doc = await parseHtml(res.body);
-            const scriptEl = doc.querySelector('script');
-            const scriptText = scriptEl?.textContent || '';
-
-            // Find encoded URL
-            const encodedMatch = scriptText.match(/reurl\s*=\s*"([^"]+)"/);
-            if (!encodedMatch) {
-                // Try alternative extraction
-                const base64Match = scriptText.match(/r=([A-Za-z0-9+/=]+)/);
-                if (base64Match) {
-                    try {
-                        const decoded = atob(base64Match[1]);
-                        const linkMatch = decoded.match(/link=([^&]+)/);
-                        if (linkMatch) {
-                            streams.push(new StreamResult({
-                                url: linkMatch[1],
-                                source: 'HUBCDN',
-                                quality: 'Auto',
-                                headers: STREAM_HEADERS
-                            }));
-                        }
-                    } catch (e) {
-                        // Base64 decode failed
-                    }
-                }
-                return;
-            }
-
-            const encoded = encodedMatch[1].split('?r=')[1];
-            if (!encoded) return;
-
-            try {
-                const decoded = atob(encoded);
-                const linkMatch = decoded.match(/link=([^&]+)/);
-                if (linkMatch) {
-                    streams.push(new StreamResult({
-                        url: linkMatch[1],
-                        source: 'HUBCDN',
-                        quality: 'Auto',
-                        headers: STREAM_HEADERS
-                    }));
-                }
-            } catch (e) {
-                console.error('HUBCDN decode error:', e.message);
-            }
-        } catch (e) {
-            console.error('HUBCDN extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Extract from HubDrive
-     */
-    async function extractHubDrive(url, streams) {
-        try {
-            const res = await http_get(url, { ...STREAM_HEADERS, timeout: 5000 });
-            if (res.status !== 200) return;
-
-            const doc = await parseHtml(res.body);
-            const btn = doc.querySelector('.btn.btn-primary.btn-user.btn-success1.m-1');
-            const href = btn?.getAttribute('href');
-
-            if (!href) return;
-
-            if (href.includes('hubcloud', true)) {
-                await extractHubCloud(href, 'HubDrive', streams);
-            } else {
-                streams.push(new StreamResult({
-                    url: href,
-                    source: 'HubDrive',
-                    quality: 'Auto',
-                    headers: STREAM_HEADERS
-                }));
-            }
-        } catch (e) {
-            console.error('HubDrive extraction error:', e.message);
-        }
-    }
-
-    /**
-     * Dispatch to appropriate extractor based on URL
-     */
-    async function extractStream(url, streams, referer) {
-        if (!url) return;
-
-        const lowerUrl = url.toLowerCase();
-        const headers = { ...STREAM_HEADERS, 'Referer': referer || manifest.baseUrl };
-
-        // Dispatch to appropriate extractor
-        if (lowerUrl.includes('hubcloud') || lowerUrl.includes('gamerxyt') || lowerUrl.includes('hub.')) {
-            await extractHubCloud(url, referer, streams);
-        } else if (lowerUrl.includes('hubdrive') || lowerUrl.includes('drive') || lowerUrl.includes('hubdrive')) {
-            await extractHubDrive(url, streams);
-        } else if (lowerUrl.includes('gdflix') || lowerUrl.includes('gdfix')) {
-            await extractGDFlix(url, streams);
-        } else if (lowerUrl.includes('hubcdn') || lowerUrl.includes('hubcdnn')) {
-            await extractHubCdn(url, streams);
-        } else if (lowerUrl.includes('pixeldrain') || lowerUrl.includes('pixeldra')) {
-            await extractPixelDrain(url, streams, 'Auto');
-        } else if (lowerUrl.includes('gofile')) {
-            await extractGoFile(url, streams, 'Auto');
-        } else if (lowerUrl.includes('buzz')) {
-            await extractBuzzServer(url + '/download', referer, streams, 'Auto', headers);
-        } else {
-            // Direct link fallback
-            streams.push(new StreamResult({
-                url: url,
-                source: 'Direct',
-                quality: getQuality(url),
-                headers: headers
-            }));
-        }
-    }
-
-    // ============================================================================
-    // MAIN FUNCTIONS
-    // ============================================================================
-
-    /**
-     * getHome - Fetch homepage categories
-     */
-    async function getHome(cb) {
-        try {
-            const categories = [
-                { name: 'Home', path: '' },
-                { name: 'Bollywood', path: 'category/bollywood' },
-                { name: 'Hollywood', path: 'category/hollywood' },
-                { name: 'South Indian', path: 'category/southindian' },
-                { name: 'Gujarati', path: 'category/gujarati' },
-                { name: 'Web Series', path: 'category/webseries' }
-            ];
-
-            const homeData = {};
-
-            for (const cat of categories) {
-                try {
-                    const url = `${manifest.baseUrl}/${cat.path}`;
-                    const res = await http_get(url, DEFAULT_HEADERS);
-
-                    if (res.status !== 200) continue;
-
-                    const doc = await parseHtml(res.body);
-                    const items = await doc.querySelectorAll('div.simple-grid-grid-post');
-
-                    const results = [];
-                    for (const item of items) {
-                        const result = await toSearchResult(item);
-                        if (result) results.push(result);
-                    }
-
-                    if (results.length > 0) {
-                        homeData[cat.name] = results;
-                    }
-                } catch (e) {
-                    console.error(`Error fetching category ${cat.name}:`, e.message);
-                }
-            }
-
-            // Add Trending section if available
-            if (homeData['Home'] && homeData['Home'].length > 0) {
-                homeData['Trending'] = homeData['Home'].slice(0, 12);
-            }
-
-            cb({ success: true, data: homeData });
-        } catch (e) {
-            cb({ success: false, errorCode: 'HOME_ERROR', message: e.message });
-        }
-    }
-
-    /**
-     * search - Search for content
-     */
-    async function search(query, cb) {
-        try {
-            if (!query || query.trim().length === 0) {
-                cb({ success: true, data: [] });
-                return;
-            }
-
-            const searchUrl = `${manifest.baseUrl}/page/1/?s=${encodeURIComponent(query)}`;
-            const res = await http_get(searchUrl, DEFAULT_HEADERS);
-
-            if (res.status !== 200) {
-                cb({ success: false, errorCode: 'SEARCH_ERROR', message: 'Search failed' });
-                return;
-            }
-
-            const doc = await parseHtml(res.body);
-            const items = await doc.querySelectorAll('div.simple-grid-grid-post');
-
-            const results = [];
-            for (const item of items) {
-                const result = await toSearchResult(item);
-                if (result) results.push(result);
-            }
-
-            cb({ success: true, data: results });
-        } catch (e) {
-            cb({ success: false, errorCode: 'SEARCH_ERROR', message: e.message });
-        }
-    }
-
-    /**
-     * load - Load detailed content page
-     */
-    async function load(url, cb) {
-        try {
-            const res = await http_get(url, DEFAULT_HEADERS);
-
-            if (res.status !== 200) {
-                cb({ success: false, errorCode: 'LOAD_ERROR', message: 'Page not found' });
-                return;
-            }
-
-            const doc = await parseHtml(res.body);
-
-            // Extract basic info
-            const titleEl = doc.querySelector('#movie_title > a');
-            let title = decodeHtml(titleEl?.textContent?.trim() || 'No Title');
-
-            // Get year from title if present
-            const yearMatch = title.match(/\((\d{4})\)/);
-            const year = yearMatch ? parseInt(yearMatch[1]) : null;
-            if (yearMatch) {
-                title = title.replace(yearMatch[0], '').trim();
-            }
-
-            const poster = doc.querySelector('meta[property="og:image"]')?.getAttribute('content') || '';
-            const plot = decodeHtml(doc.querySelector('#summary')?.textContent?.trim() || '');
-
-            // Get content type
-            const typeEl = doc.querySelector('h1.post-title a');
-            const typeText = typeEl?.textContent || '';
-            const contentType = typeText.toLowerCase().includes('movie') ? 'movie' : 'series';
-
-            // Extract IMDB ID
-            const imdbLink = doc.querySelector('div span a[href*="imdb.com"]')?.getAttribute('href');
-            const imdbId = extractImdbId(imdbLink);
-
-            // Fetch Cinemeta data for enrichment
-            let meta = null;
-            if (imdbId) {
-                meta = await fetchCinemetaData(imdbId, contentType);
-            }
-
-            // Build multimedia item
-            const multimediaItem = {
-                title: meta?.name || title,
-                url: url,
-                posterUrl: meta?.poster || poster,
-                bannerUrl: meta?.background || poster,
-                description: meta?.description || plot,
-                type: contentType,
-                year: meta?.year ? parseInt(meta.year) : year,
-                score: meta?.imdbRating ? parseFloat(meta.imdbRating) : 0,
-                genres: meta?.genres || [],
-                cast: (meta?.appExtras?.cast || []).map(c => c.name).filter(Boolean),
-                episodes: []
-            };
-
-            // Handle series
-            if (contentType === 'series') {
-                multimediaItem.episodes = await parseSeriesEpisodes(doc, url, meta);
-            } else {
-                // Handle movies - collect download links
-                multimediaItem.episodes = await parseMovieLinks(doc, url);
-            }
-
-            cb({ success: true, data: new MultimediaItem(multimediaItem) });
-        } catch (e) {
-            cb({ success: false, errorCode: 'LOAD_ERROR', message: e.message });
-        }
-    }
-
-    /**
-     * Parse series episodes from document
-     */
-    async function parseSeriesEpisodes(doc, baseUrl, meta) {
-        const episodes = [];
-        const episodeMap = new Map();
-
-        // Process season headers
-        const h4Elements = await doc.querySelectorAll('h4');
-        for (const h4 of h4Elements) {
-            const seasonNum = parseSeasonNumber(h4.textContent);
-
-            // Get next sibling paragraphs
-            let sibling = h4.nextElementSibling;
-            while (sibling && sibling.tagName.toLowerCase() === 'p') {
-                const buttons = await sibling.querySelectorAll('a.maxbutton');
-
-                for (const btn of buttons) {
-                    if (isBlockedButton(btn)) continue;
-
-                    const seasonPageUrl = btn.getAttribute('href');
-                    if (!seasonPageUrl) continue;
-
-                    // Fetch season page to get episodes
-                    try {
-                        const seasonRes = await http_get(fixUrl(seasonPageUrl), DEFAULT_HEADERS);
-                        const seasonDoc = await parseHtml(seasonRes.body);
-
-                        const epButtons = await seasonDoc.querySelectorAll('a.maxbutton-ep');
-                        for (const epBtn of epButtons) {
-                            const epUrl = epBtn.getAttribute('href');
-                            const epText = epBtn.textContent || '';
-                            const epNum = parseEpisodeNumber(epText);
-
-                            if (!epNum || !epUrl) continue;
-
-                            const key = `${seasonNum}-${epNum}`;
-                            if (!episodeMap.has(key)) {
-                                // Find metadata for this episode
-                                const epMeta = meta?.videos?.find(v =>
-                                    v.season === seasonNum && v.episode === epNum
-                                );
-
-                                episodeMap.set(key, new Episode({
-                                    name: epMeta?.name || epText.trim() || `Episode ${epNum}`,
-                                    url: JSON.stringify([fixUrl(epUrl)]),
-                                    season: seasonNum,
-                                    episode: epNum,
-                                    description: epMeta?.overview || '',
-                                    posterUrl: epMeta?.thumbnail || ''
-                                }));
-                            } else {
-                                // Add additional URL
-                                const existing = safeParse(episodeMap.get(key).url) || [];
-                                existing.push(fixUrl(epUrl));
-                                episodeMap.get(key).url = JSON.stringify(existing);
-                            }
-                        }
-                    } catch (e) {
-                        console.error('Error fetching season page:', e.message);
-                    }
-                }
-
-                sibling = sibling.nextElementSibling;
-            }
-        }
-
-        // Convert map to array and sort
-        const sortedEpisodes = Array.from(episodeMap.values()).sort((a, b) => {
-            if (a.season !== b.season) return a.season - b.season;
-            return a.episode - b.episode;
+    const epLinks = block.querySelectorAll("a[href]");
+    let epNum = 1;
+    epLinks.forEach((a) => {
+      const epUrl   = fixUrl(a.getAttribute("href"));
+      const epTitle = a.textContent.trim();
+      const epMatch = epTitle.match(/episode\s*(\d+)/i) || epTitle.match(/ep[.\s]*(\d+)/i);
+      if (epMatch) epNum = parseInt(epMatch[1], 10);
+
+      if (epUrl && epTitle) {
+        episodes.push({
+          title:   epTitle,
+          url:     epUrl,
+          season:  seasonNum,
+          episode: epNum,
         });
+        epNum++;
+      }
+    });
+    seasonNum++;
+  });
 
-        // If no episodes found, create a default one with the main page URL
-        if (sortedEpisodes.length === 0) {
-            sortedEpisodes.push(new Episode({
-                name: 'All Episodes',
-                url: JSON.stringify([baseUrl]),
-                season: 1,
-                episode: 1
-            }));
-        }
+  // Fallback: single-level episode links (many DudeFilms series pages)
+  if (episodes.length === 0) {
+    doc.querySelectorAll("a[href]").forEach((a) => {
+      const href = a.getAttribute("href") || "";
+      if (/episode|ep-\d|S\d+E\d+/i.test(href) && href.includes(BASE_URL.replace("https://", ""))) {
+        episodes.push({
+          title:   a.textContent.trim(),
+          url:     fixUrl(href),
+          season:  1,
+          episode: episodes.length + 1,
+        });
+      }
+    });
+  }
 
-        return sortedEpisodes;
+  return episodes;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXTRACTORS  ← Extractors.kt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Master extractor dispatcher.
+ * Examines URL and routes to the correct resolver.
+ * Mirrors the when() block in loadLinks().
+ */
+async function extractStreamLinks(embedUrl, quality = "Unknown") {
+  for (const { pattern, resolver } of EXTRACTOR_PATTERNS) {
+    if (pattern.test(embedUrl)) {
+      try {
+        const links = await resolver(embedUrl, quality);
+        return Array.isArray(links) ? links : (links ? [links] : []);
+      } catch (e) {
+        console.warn("[DudeFilms] Extractor failed for", embedUrl, e.message);
+        return [];
+      }
     }
+  }
+  // Generic iframe scrape fallback
+  return genericExtract(embedUrl, quality);
+}
 
-    /**
-     * Parse movie download links
-     */
-    async function parseMovieLinks(doc, baseUrl) {
-        const links = [];
+/**
+ * Generic extractor: scrape m3u8 / mp4 from page source.
+ * Mirrors Utils.extractM3u8()
+ */
+async function genericExtract(url, quality) {
+  const text = await fetchText(url, { Referer: BASE_URL });
+  const links = [];
 
-        // Collect all maxbutton links from the page
-        const buttons = await doc.querySelectorAll('a.maxbutton');
-        for (const btn of buttons) {
-            if (isBlockedButton(btn)) continue;
+  // m3u8
+  const m3u8Matches = regexFindAll(/(https?:[^"'\s]+\.m3u8[^"'\s]*)/g, text);
+  m3u8Matches.forEach((src) => {
+    links.push({ url: src, quality: quality || "HLS", type: "hls",
+                 headers: { Referer: url } });
+  });
 
-            const href = btn.getAttribute('href');
-            if (!href || !href.startsWith('http')) continue;
+  // mp4
+  if (links.length === 0) {
+    const mp4Matches = regexFindAll(/(https?:[^"'\s]+\.mp4[^"'\s]*)/g, text);
+    mp4Matches.forEach((src) => {
+      links.push({ url: src, quality: quality || parseQuality(src), type: "mp4",
+                   headers: { Referer: url } });
+    });
+  }
 
-            const text = btn.textContent || '';
-            const quality = getQuality(text) || getQuality(baseUrl);
+  return links;
+}
 
-            links.push({
-                url: fixUrl(href),
-                quality: quality
-            });
-        }
+/**
+ * Speedostream extractor ← SpeedoStream extractor in Extractors.kt
+ * DudeFilms's primary host.
+ */
+async function resolveSpeedostream(url, quality) {
+  const text = await fetchText(url, {
+    Referer: BASE_URL,
+    "X-Requested-With": "XMLHttpRequest",
+  });
 
-        // Also check for direct download section
-        const dlSection = doc.querySelector('.entry-content');
-        if (dlSection) {
-            const dlButtons = await dlSection.querySelectorAll('a');
-            for (const btn of dlButtons) {
-                const href = btn.getAttribute('href');
-                if (!href || !href.startsWith('http')) continue;
-                if (isBlockedButton(btn)) continue;
+  // Pattern 1: direct sources array
+  let sources = regexFind(/sources\s*:\s*\[{[^}]*file\s*:\s*["']([^"']+)["']/i, text);
 
-                // Avoid duplicates
-                if (!links.some(l => l.url === fixUrl(href))) {
-                    const text = btn.textContent || '';
-                    links.push({
-                        url: fixUrl(href),
-                        quality: getQuality(text) || 'Auto'
-                    });
-                }
-            }
-        }
-
-        if (links.length === 0) {
-            // Return the base URL as fallback
-            return [new Episode({
-                name: 'Watch',
-                url: JSON.stringify([baseUrl]),
-                season: 1,
-                episode: 1
-            })];
-        }
-
-        return [new Episode({
-            name: 'Watch Movie',
-            url: JSON.stringify(links),
-            season: 1,
-            episode: 1
-        })];
+  // Pattern 2: packed/obfuscated JS
+  if (!sources) {
+    const packed = regexFind(/eval\(function\(p,a,c,k,e,d\).*?\)\)/s, text);
+    if (packed) {
+      try {
+        // eslint-disable-next-line no-eval
+        const unpacked = Function(`"use strict"; return (${packed})`)();
+        sources = regexFind(/file\s*:\s*["']([^"']+\.m3u8[^"']*)/i, unpacked);
+      } catch (_) {}
     }
+  }
 
-    /**
-     * loadStreams - Extract video streams from episode URL
-     */
-    async function loadStreams(url, cb) {
+  // Pattern 3: jwplayer setup
+  if (!sources) {
+    sources = regexFind(/file\s*:\s*["']([^"']*\.m3u8[^"']*)/i, text);
+  }
+
+  if (sources) {
+    return [{
+      url:     fixUrl(sources),
+      quality: quality || "HLS",
+      type:    "hls",
+      headers: { Referer: url, Origin: new URL(url).origin },
+    }];
+  }
+  return await genericExtract(url, quality);
+}
+
+/**
+ * Doodstream extractor ← DoodExtractor in Extractors.kt
+ */
+async function resolveDoodstream(url, quality) {
+  // Normalise to dood.wf canonical domain
+  const normUrl = url.replace(/dood\.\w+/, "dood.wf");
+  const text    = await fetchText(normUrl, { Referer: "https://dood.wf" });
+
+  // Extract pass_md5 path
+  const passMd5 = regexFind(/\/pass_md5\/[^"']+/i, text);
+  if (!passMd5) return [];
+
+  const passUrl = "https://dood.wf" + passMd5;
+  const token   = regexFind(/\?token=([^&"'\s]+)/i, text);
+
+  const passRes = await fetchText(passUrl, {
+    Referer: normUrl,
+    "X-Requested-With": "XMLHttpRequest",
+  });
+
+  if (!passRes) return [];
+
+  // Dood appends random chars + token
+  const randomStr = Math.random().toString(36).substring(2, 14);
+  const finalUrl  = passRes.trim() + randomStr + (token ? "?token=" + token + "&expiry=" + Date.now() : "");
+
+  return [{
+    url:     finalUrl,
+    quality: quality || "HLS",
+    type:    "mp4",
+    headers: { Referer: "https://dood.wf/" },
+  }];
+}
+
+/**
+ * Streamtape extractor ← StreamtapeExtractor
+ */
+async function resolveStreamtape(url, quality) {
+  const text = await fetchText(url, { Referer: BASE_URL });
+
+  // Streamtape obfuscates the link across two JS variables
+  const token1 = regexFind(/id=([^&"']+)/i, text);
+  const token2 = regexFind(/,\s*"([^"]+)"\s*\+\s*token/i, text) ||
+                 regexFind(/robotlink\S*\s*=\s*["']([^"']+)/i, text);
+
+  if (token1 && token2) {
+    const finalUrl = "https://streamtape.com/get_video?id=" + token1 + "&stream=1";
+    return [{
+      url:     finalUrl,
+      quality: quality || "HLS",
+      type:    "mp4",
+      headers: { Referer: url },
+    }];
+  }
+
+  // Fallback: grep for direct mp4 link
+  const direct = regexFind(/(https?:\/\/tapecontent[^"'\s]+\.mp4[^"'\s]*)/i, text);
+  if (direct) {
+    return [{ url: direct, quality, type: "mp4", headers: { Referer: url } }];
+  }
+  return [];
+}
+
+/**
+ * Voe.sx extractor ← VoeExtractor
+ */
+async function resolveVoe(url, quality) {
+  const text = await fetchText(url, { Referer: BASE_URL });
+
+  // Voe stores HLS URL in a JS variable
+  let hls = regexFind(/'hls'\s*:\s*'([^']+)'/i, text) ||
+            regexFind(/"hls"\s*:\s*"([^"]+)"/i, text);
+
+  if (!hls) {
+    // Try base64 encoded payload
+    const b64 = regexFind(/atob\(['"]([A-Za-z0-9+/=]+)['"]\)/i, text);
+    if (b64) hls = regexFind(/\.m3u8/, safeAtob(b64)) ? safeAtob(b64) : null;
+  }
+
+  if (hls) {
+    return [{
+      url:     hls,
+      quality: quality || "HLS",
+      type:    "hls",
+      headers: { Referer: url, Origin: "https://voe.sx" },
+    }];
+  }
+  return await genericExtract(url, quality);
+}
+
+/**
+ * Filemoon extractor ← FilemoonExtractor
+ */
+async function resolveFilemoon(url, quality) {
+  const text = await fetchText(url, { Referer: BASE_URL });
+
+  // Filemoon uses packed JS
+  const packed = regexFind(/eval\(function\(p,a,c,k,e,d\).*?\)\)/s, text);
+  let unpacked = "";
+  if (packed) {
+    try {
+      unpacked = Function(`"use strict"; return (${packed})`)();
+    } catch (_) { unpacked = text; }
+  } else {
+    unpacked = text;
+  }
+
+  const m3u8 = regexFind(/file\s*:\s*["']([^"']*\.m3u8[^"']*)/i, unpacked) ||
+               regexFind(/(https?:[^"'\s]+\.m3u8[^"'\s]*)/i, unpacked);
+
+  if (m3u8) {
+    return [{
+      url:     m3u8,
+      quality: quality || "HLS",
+      type:    "hls",
+      headers: { Referer: url, Origin: new URL(url).origin },
+    }];
+  }
+  return [];
+}
+
+/**
+ * Streamhub extractor (generic fallback)
+ */
+async function resolveStreamhub(url, quality) {
+  return await genericExtract(url, quality);
+}
+
+/**
+ * Mixdrop extractor
+ */
+async function resolveMixdrop(url, quality) {
+  const text = await fetchText(url, { Referer: BASE_URL });
+  const src  = regexFind(/MDCore\.wurl\s*=\s*["']([^"']+)/i, text);
+  if (src) {
+    return [{
+      url:     src.startsWith("//") ? "https:" + src : src,
+      quality: quality || "Unknown",
+      type:    "mp4",
+      headers: { Referer: "https://mixdrop.co" },
+    }];
+  }
+  return [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMBED SCRAPER  ← loadLinks() in dudefilms.kt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Scrape all iFrame / embed URLs from a DudeFilms content page.
+ * DudeFilms uses a WordPress plugin that renders server-side iframes.
+ * Mirrors the iframe loop in loadLinks().
+ */
+async function scrapeEmbeds(pageUrl) {
+  const doc    = await fetchDoc(pageUrl, { Referer: BASE_URL });
+  const embeds = [];
+
+  // Primary: <iframe src="...">
+  doc.querySelectorAll("iframe[src]").forEach((frame) => {
+    const src = frame.getAttribute("src");
+    if (src && !src.includes("google.com/maps")) {
+      embeds.push({ url: fixUrl(src), quality: "Unknown" });
+    }
+  });
+
+  // Secondary: data-src iframes (lazy loaded)
+  doc.querySelectorAll("iframe[data-src]").forEach((frame) => {
+    const src = frame.getAttribute("data-src");
+    if (src) embeds.push({ url: fixUrl(src), quality: "Unknown" });
+  });
+
+  // Tertiary: direct server links in specific WP shortcodes / divs
+  // DudeFilms renders watch buttons with quality in text
+  doc.querySelectorAll(
+    ".wp-block-buttons a, .gmr-download-box a, .server-button a, " +
+    "a[href*='speedostream'], a[href*='dood'], a[href*='streamtape'], " +
+    "a[href*='voe.sx'], a[href*='filemoon'], a[href*='mixdrop']"
+  ).forEach((a) => {
+    const href = a.getAttribute("href");
+    if (href) {
+      const qualityHint = parseQuality(a.textContent || a.closest("*")?.textContent || "");
+      embeds.push({ url: fixUrl(href), quality: qualityHint });
+    }
+  });
+
+  // Quaternary: onclick attributes with embed URLs
+  doc.querySelectorAll("[onclick]").forEach((el) => {
+    const onclick = el.getAttribute("onclick") || "";
+    const found   = regexFind(/(https?:\/\/[^"')\s]+)/i, onclick);
+    if (found) embeds.push({ url: found, quality: "Unknown" });
+  });
+
+  // Deduplicate by URL
+  const seen = new Set();
+  return embeds.filter(({ url }) => {
+    if (!url || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IMDB ENRICHMENT  (bonus: poster + metadata via TMDB/IMDB)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Attempt to enrich a media card with TMDB metadata.
+ * Falls back to original data if TMDB unavailable.
+ * Uses TMDB's free search API (no key required for basic search).
+ */
+async function enrichWithTMDB(card) {
+  try {
+    const query   = encodeURIComponent(card.title);
+    const tmdbType = card.type === "tv" ? "tv" : "movie";
+    const apiBase = "https://api.themoviedb.org/3";
+    const searchUrl = `${apiBase}/search/${tmdbType}?query=${query}&language=en-US&page=1` +
+                      (TMDB_API_KEY ? `&api_key=${TMDB_API_KEY}` : "");
+
+    const res     = await httpGet(searchUrl, { Accept: "application/json" });
+    const json    = typeof res.json === "function" ? await res.json() :
+                    (res.json || JSON.parse(res.body || res.text || "{}"));
+    const results = json.results || [];
+
+    if (results.length > 0) {
+      const hit     = results[0];
+      const imgBase = "https://image.tmdb.org/t/p/w500";
+      const poster  = hit.poster_path ? imgBase + hit.poster_path : card.poster;
+      const backdrop = hit.backdrop_path ? imgBase.replace("w500","w1280") + hit.backdrop_path : null;
+      const year    = (hit.release_date || hit.first_air_date || "").split("-")[0];
+      const rating  = hit.vote_average ? hit.vote_average.toFixed(1) : card.rating;
+      const desc    = hit.overview || card.description;
+      const imdbId  = hit.imdb_id || null;
+
+      return Object.assign({}, card, {
+        poster:    poster  || card.poster,
+        backdrop:  backdrop || card.backdrop || null,
+        year:      year    || card.year,
+        rating:    rating  || card.rating,
+        description: desc  || card.description,
+        imdbId:    imdbId  || card.imdbId || null,
+        tmdbId:    hit.id  || null,
+        tmdbType:  tmdbType,
+        genres:    (hit.genre_ids || []).join(",") || card.genres || null,
+      });
+    }
+  } catch (e) {
+    // TMDB enrichment is best-effort; never break the main flow
+    console.warn("[DudeFilms] TMDB enrichment failed:", e.message);
+  }
+  return card;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLUGIN IMPLEMENTATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+const plugin = {
+
+  // ── Metadata ──────────────────────────────────────────────────────────────
+  id:          "dudefilms",
+  name:        "DudeFilms",
+  version:     "1.0.0",
+  baseUrl:     BASE_URL,
+  language:    "hi",
+  types:       ["movie", "tv"],
+  hasHomePage: true,
+  icon:        BASE_URL + "/wp-content/uploads/2022/09/cropped-logopng-1-32x32.png",
+
+  // ── init ──────────────────────────────────────────────────────────────────
+  /**
+   * Called once after plugin load.
+   * Mirrors CloudStream plugin onLoaded() / init block.
+   */
+  async init() {
+    console.log("[DudeFilms] Plugin initialised →", BASE_URL);
+  },
+
+  // ── getHomePage ───────────────────────────────────────────────────────────
+  /**
+   * Returns homepage sections.
+   * Mirrors getMainPage(page, request).
+   *
+   * @param {number} page - 1-based page number
+   * @returns {{ sections: Array<{ title, items }> }}
+   */
+  async getHomePage(page = 1) {
+    const sections = [];
+
+    await Promise.allSettled(
+      HOME_SECTIONS.map(async (section) => {
         try {
-            const streams = [];
+          const url = BASE_URL + section.path + page + "/";
+          const doc = await fetchDoc(url);
+          const items = parseMediaCards(doc);
 
-            // Parse the URL data
-            let urlsToProcess = [];
-
-            try {
-                const parsed = safeParse(url);
-                if (Array.isArray(parsed)) {
-                    urlsToProcess = parsed;
-                } else if (parsed && typeof parsed === 'object') {
-                    urlsToProcess = [parsed];
-                } else {
-                    urlsToProcess = [{ url: url, quality: 'Auto' }];
-                }
-            } catch (e) {
-                urlsToProcess = [{ url: url, quality: 'Auto' }];
-            }
-
-            // Process each URL
-            for (const item of urlsToProcess) {
-                const streamUrl = typeof item === 'string' ? item : item.url;
-                const quality = typeof item === 'object' ? item.quality : 'Auto';
-
-                if (!streamUrl) continue;
-
-                // Determine referer
-                let referer = manifest.baseUrl;
-                try {
-                    referer = new URL(streamUrl).origin;
-                } catch (e) {}
-
-                await extractStream(streamUrl, streams, referer);
-            }
-
-            // Sort streams by quality
-            streams.sort((a, b) => {
-                const qualityOrder = ['4K', '1440p', '1080p', '720p', '480p', '360p', 'Auto'];
-                const aIndex = qualityOrder.indexOf(a.quality);
-                const bIndex = qualityOrder.indexOf(b.quality);
-                return aIndex - bIndex;
+          if (items.length > 0) {
+            sections.push({
+              title: section.name,
+              type:  section.type,
+              items,
             });
-
-            if (streams.length === 0) {
-                cb({ success: true, data: [], message: 'No streams found' });
-            } else {
-                cb({ success: true, data: streams });
-            }
+          }
         } catch (e) {
-            cb({ success: false, errorCode: 'STREAM_ERROR', message: e.message });
+          console.warn("[DudeFilms] Homepage section failed:", section.name, e.message);
         }
+      })
+    );
+
+    return { sections };
+  },
+
+  // ── search ────────────────────────────────────────────────────────────────
+  /**
+   * Searches DudeFilms.
+   * Mirrors search(query).
+   *
+   * @param {string} query
+   * @returns {Array<MediaCard>}
+   */
+  async search(query) {
+    if (!query || !query.trim()) return [];
+
+    const searchUrl = `${BASE_URL}/?s=${encodeURIComponent(query.trim())}`;
+    const doc       = await fetchDoc(searchUrl);
+    const results   = parseMediaCards(doc);
+
+    // Also check secondary search endpoint WordPress uses
+    if (results.length === 0) {
+      try {
+        const altUrl = `${BASE_URL}/search/${encodeURIComponent(query.replace(/\s+/g, "+"))}/`;
+        const doc2   = await fetchDoc(altUrl);
+        results.push(...parseMediaCards(doc2));
+      } catch (_) {}
     }
 
-    // ============================================================================
-    // EXPORTS
-    // ============================================================================
+    // Deduplicate by URL
+    const seen = new Set();
+    return results.filter(({ url }) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+  },
 
-    globalThis.getHome = getHome;
-    globalThis.search = search;
-    globalThis.load = load;
-    globalThis.loadStreams = loadStreams;
+  // ── load ──────────────────────────────────────────────────────────────────
+  /**
+   * Parses a content detail page.
+   * Mirrors load(url) → MovieLoadResponse | TvSeriesLoadResponse.
+   *
+   * @param {string} url - Content page URL
+   * @returns {MediaDetail}
+   */
+  async load(url) {
+    const doc = await fetchDoc(url, { Referer: BASE_URL });
 
-})();
+    // ── Title ──────────────────────────────────────────────────────────────
+    const titleEl = doc.querySelector(
+      "h1.entry-title, h1.post-title, h1, .entry-title"
+    );
+    const rawTitle = titleEl ? titleEl.textContent.trim() : "";
+    const title    = cleanTitle(rawTitle) || rawTitle;
+
+    // ── Poster ────────────────────────────────────────────────────────────
+    const posterEl = doc.querySelector(
+      ".entry-thumbnail img, .post-thumbnail img, img.wp-post-image, " +
+      "meta[property='og:image']"
+    );
+    const poster = posterEl
+      ? fixUrl(
+          posterEl.getAttribute("content") ||
+          posterEl.getAttribute("data-src") ||
+          posterEl.getAttribute("src")
+        )
+      : null;
+
+    // ── Background / Backdrop ─────────────────────────────────────────────
+    const bgEl   = doc.querySelector("meta[property='og:image']");
+    const backdrop = bgEl ? fixUrl(bgEl.getAttribute("content")) : poster;
+
+    // ── Description ───────────────────────────────────────────────────────
+    const descEl = doc.querySelector(
+      ".entry-content p, .post-content p, .synopsis, .gmr-movie-description, " +
+      "meta[name='description'], meta[property='og:description']"
+    );
+    const description = descEl
+      ? (descEl.getAttribute("content") || descEl.textContent.trim())
+      : "";
+
+    // ── Year / Rating / Genres ────────────────────────────────────────────
+    const year   = extractYear(rawTitle) ||
+                   extractYear(doc.querySelector("time, .year, .gmr-movie-on")?.textContent || "");
+    const ratingEl = doc.querySelector(".gmr-rating, .imdb-rating, .rating-count, [itemprop='ratingValue']");
+    const rating   = ratingEl
+      ? ratingEl.textContent.replace(/[^\d.]/g, "").trim()
+      : null;
+    const genreEls = doc.querySelectorAll("a[rel='category tag'], .gmr-genre a, .gmr-movie-genre a");
+    const genres   = Array.from(genreEls).map((g) => g.textContent.trim()).join(", ");
+
+    // ── Type detection ────────────────────────────────────────────────────
+    const isTv = /series|season|episode|web.series/i.test(rawTitle + url + genres);
+    const type = isTv ? "tv" : "movie";
+
+    // ── IMDB ID ───────────────────────────────────────────────────────────
+    const imdbLinkEl = doc.querySelector("a[href*='imdb.com/title/']");
+    const imdbId     = imdbLinkEl
+      ? regexFind(/title\/(tt\d+)/i, imdbLinkEl.getAttribute("href") || "")
+      : null;
+
+    // ── Episodes (TV only) ────────────────────────────────────────────────
+    const episodes = isTv ? parseEpisodes(doc, url) : [];
+
+    // ── Streaming entry points ────────────────────────────────────────────
+    // For movies: current URL is the watch page.
+    // For TV: each episode URL is a watch page.
+    const watchUrls = isTv && episodes.length > 0
+      ? episodes.map((e) => e.url)
+      : [url];
+
+    // ── Base card ─────────────────────────────────────────────────────────
+    let mediaDetail = {
+      title,
+      url,
+      poster,
+      backdrop,
+      description,
+      year,
+      rating,
+      genres,
+      type,
+      imdbId,
+      episodes: isTv ? episodes : undefined,
+      watchUrls,
+      sourceUrl: url,
+    };
+
+    // ── Enrich with TMDB ──────────────────────────────────────────────────
+    mediaDetail = await enrichWithTMDB(mediaDetail);
+
+    return mediaDetail;
+  },
+
+  // ── loadLinks ─────────────────────────────────────────────────────────────
+  /**
+   * Extracts stream links for a given watch URL.
+   * Mirrors loadLinks(data, isCasting, subtitleCallback, callback).
+   *
+   * @param {string} url       - Watch page URL (movie or episode)
+   * @param {string} showKey   - Optional show identifier (for TV episodes)
+   * @returns {Array<StreamLink>}
+   */
+  async loadLinks(url, showKey) {
+    const allLinks = [];
+
+    // Step 1: Scrape embed URLs from the page
+    const embeds = await scrapeEmbeds(url);
+
+    if (embeds.length === 0) {
+      console.warn("[DudeFilms] No embeds found at:", url);
+      return allLinks;
+    }
+
+    // Step 2: Resolve each embed in parallel (bounded concurrency)
+    const CONCURRENCY = 4;
+    for (let i = 0; i < embeds.length; i += CONCURRENCY) {
+      const batch = embeds.slice(i, i + CONCURRENCY);
+      const settled = await Promise.allSettled(
+        batch.map(({ url: embedUrl, quality }) =>
+          extractStreamLinks(embedUrl, quality)
+        )
+      );
+      settled.forEach((result) => {
+        if (result.status === "fulfilled") {
+          allLinks.push(...(result.value || []));
+        }
+      });
+    }
+
+    // Step 3: Sort by quality preference
+    const Q_ORDER = { "4K": 0, "1080p": 1, "720p": 2, "480p": 3, "360p": 4, "HLS": 5, "Unknown": 6 };
+    allLinks.sort((a, b) => (Q_ORDER[a.quality] ?? 99) - (Q_ORDER[b.quality] ?? 99));
+
+    return allLinks;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT (SkyStream plugin registration)
+// ─────────────────────────────────────────────────────────────────────────────
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = plugin; // CommonJS / test environment
+} else {
+  // SkyStream runtime registration
+  skystream.registerPlugin(plugin);
+}
