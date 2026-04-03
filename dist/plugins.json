@@ -1,21 +1,22 @@
 [
   {
-    "packageName": "com.dudefilms.skystream",
+    "packageName": "dev.dudefilms.skystream",
     "name": "DudeFilms",
     "version": 1,
-    "baseUrl": "https://dudefilms.sarl",
-    "description": "DudeFilms - Hindi Movies, Web Series, Bollywood, Hollywood & More",
+    "baseUrl": "https://dudefilms.llc",
+    "description": "Indian Movies and TV Series - Bollywood, Hollywood, South Indian, Web Series",
     "authors": [
-      "Phisher98 (original) → SkyStream Port"
+      "DudeFilms"
     ],
     "languages": [
-      "hi"
+      "hi",
+      "en"
     ],
     "categories": [
       "Movie",
       "TvSeries"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.dudefilms.skystream.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.dudefilms.skystream.sky"
   },
   {
     "packageName": "movieblast",
