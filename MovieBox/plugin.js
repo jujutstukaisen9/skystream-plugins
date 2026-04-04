@@ -14,15 +14,13 @@
     //  newMovieSearchResponse()      → new MultimediaItem({ type:"movie" })
     //  newTvSeriesLoadResponse()     → new MultimediaItem({ type:"series", episodes })
     //  newEpisode("id|s|e")          → new Episode({ url:"id|s|e" })
-    //  newExtractorLink()            → new StreamResult({ url, quality, headers })
+    //  newExtractorLink()            → new StreamResult({ name, url, source, headers })
     //  newSubtitleFile()             → { url, label, lang } in StreamResult.subtitles
     //  base64Decode()                → atob()
     //  base64DecodeArray()           → b64ToBytes() (second-layer decode → raw bytes)
     //  HmacMD5 / MD5 (Java crypto)  → pure-JS implementations below
     //  app.get / app.post            → http_get / http_post (SkyStream globals)
     // ─────────────────────────────────────────────────────────────────────────────
-
-    // ── Constants ─────────────────────────────────────────────────────────────────
 
     const API_BASE    = "https://api3.aoneroom.com";
     const UA_MBOX     = "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)";
@@ -33,49 +31,35 @@
     const GAID_ONEROOM = "1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d";
     const TZ = "Asia/Calcutta";
 
-    // ── Binary helpers ────────────────────────────────────────────────────────────
-
     function strToBytes(s) {
         const out = new Uint8Array(s.length);
         for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xFF;
         return out;
     }
-
     function hexToBytes(hex) {
         const out = new Uint8Array(hex.length >>> 1);
         for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
         return out;
     }
-
     function concat(a, b) {
         const out = new Uint8Array(a.length + b.length);
         out.set(a); out.set(b, a.length);
         return out;
     }
-
-    // Converts a binary string (each char = one byte) to Uint8Array
     function binStrToBytes(s) {
         const out = new Uint8Array(s.length);
         for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
         return out;
     }
-
-    // Base64 → raw bytes  (mirrors Kotlin base64DecodeArray)
-    function b64ToBytes(b64) {
-        return binStrToBytes(atob(b64));
-    }
-
-    // Uint8Array → base64 string
+    function b64ToBytes(b64) { return binStrToBytes(atob(b64)); }
     function bytesToBase64(bytes) {
         let s = "";
         for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
         return btoa(s);
     }
 
-    // ── MD5 (pure JS, correct little-endian implementation) ──────────────────────
-
+    // ── MD5 ──────────────────────────────────────────────────────────────────────
     function md5(input) {
-        // input: Uint8Array
         function safeAdd(x, y) { const l = (x & 0xFFFF) + (y & 0xFFFF); return (((x >> 16) + (y >> 16) + (l >> 16)) << 16) | (l & 0xFFFF); }
         function rol(n, c) { return (n << c) | (n >>> (32 - c)); }
         function cmn(q, a, b, x, s, t) { return safeAdd(rol(safeAdd(safeAdd(a, q), safeAdd(x, t)), s), b); }
@@ -83,7 +67,6 @@
         function gg(a,b,c,d,x,s,t) { return cmn((b&d)|(c&~d),a,b,x,s,t); }
         function hh(a,b,c,d,x,s,t) { return cmn(b^c^d,a,b,x,s,t); }
         function ii(a,b,c,d,x,s,t) { return cmn(c^(b|~d),a,b,x,s,t); }
-
         const len = input.length, nb = len * 8;
         const pad = ((len + 8) >>> 6) + 1;
         const m = new Int32Array(pad * 16);
@@ -91,7 +74,6 @@
         m[len >> 2] |= 0x80 << ((len % 4) * 8);
         m[pad * 16 - 2] = nb & 0xFFFFFFFF;
         m[pad * 16 - 1] = Math.floor(nb / 0x100000000);
-
         let a = 1732584193, b = -271733879, c = -1732584194, d = 271733878;
         for (let i = 0; i < m.length; i += 16) {
             const [oa,ob,oc,od] = [a,b,c,d];
@@ -138,16 +120,12 @@
         });
         return out;
     }
-
     function md5Hex(input) {
         const bytes = typeof input === "string" ? strToBytes(input) : input;
-        const h = md5(bytes);
-        return Array.from(h).map(b => b.toString(16).padStart(2, "0")).join("");
+        return Array.from(md5(bytes)).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
     // ── HMAC-MD5 ─────────────────────────────────────────────────────────────────
-    // keyBytes: Uint8Array, messageBytes: Uint8Array → returns Uint8Array
-
     function hmacMD5(keyBytes, messageBytes) {
         const BLOCK = 64;
         let k = keyBytes;
@@ -160,25 +138,17 @@
         return md5(concat(okey, inner));
     }
 
-    // ── Secret key derivation ─────────────────────────────────────────────────────
-    // Kotlin: secretKeyDefault = base64Decode("NzZp…")  → intermediate string
-    //         secretBytes      = base64DecodeArray(secretKeyDefault) → raw bytes (2nd decode)
-    // So we need TWO levels of atob to get the actual key bytes.
-
+    // ── Secret keys (DOUBLE base64 decode — mirrors Kotlin base64Decode + base64DecodeArray) ──
     const SECRET_DEFAULT = b64ToBytes(atob("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="));
     const SECRET_ALT     = b64ToBytes(atob("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ=="));
 
-    // ── Device ID (fixed per session) ─────────────────────────────────────────────
-
+    // ── Device & brand ────────────────────────────────────────────────────────────
     function generateDeviceId() {
         let s = "";
         for (let i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
         return s;
     }
     const DEVICE_ID = generateDeviceId();
-
-    // ── Random device brand/model ─────────────────────────────────────────────────
-
     const BRANDS = {
         Samsung: ["SM-S918B", "SM-A528B", "SM-M336B"],
         Xiaomi:  ["2201117TI", "M2012K11AI", "Redmi Note 11"],
@@ -186,7 +156,6 @@
         Google:  ["Pixel 6", "Pixel 7", "Pixel 8"],
         Realme:  ["RMX3085", "RMX3360", "RMX3551"],
     };
-
     function randomBM() {
         const keys = Object.keys(BRANDS);
         const brand = keys[Math.floor(Math.random() * keys.length)];
@@ -194,43 +163,31 @@
         return { brand, model: models[Math.floor(Math.random() * models.length)] };
     }
 
-    // ── Token generation ──────────────────────────────────────────────────────────
-
-    // x-client-token: "<timestamp>,<md5(reversed_timestamp)>"
+    // ── Auth token builders ───────────────────────────────────────────────────────
     function makeXClientToken() {
         const ts = Date.now().toString();
         const rev = ts.split("").reverse().join("");
         return `${ts},${md5Hex(strToBytes(rev))}`;
     }
-
-    // Canonical string for HMAC (mirrors Kotlin buildCanonicalString exactly)
     function buildCanonical(method, accept, contentType, url, body, timestamp) {
-        // Parse path + query from URL without relying on the URL global
         const qIdx = url.indexOf("?");
         const path  = qIdx === -1 ? url.replace(/^https?:\/\/[^/]+/, "") : url.slice(url.indexOf("/", url.indexOf("//") + 2), qIdx);
         const qs    = qIdx === -1 ? "" : url.slice(qIdx + 1);
-
         let canonicalUrl = path;
         if (qs) {
-            // Sort parameters alphabetically (Kotlin sorts queryParameterNames)
             const pairs = qs.split("&").map(p => { const eq = p.indexOf("="); return [p.slice(0, eq), p.slice(eq + 1)]; });
             pairs.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
             canonicalUrl = path + "?" + pairs.map(([k, v]) => `${k}=${decodeURIComponent(v)}`).join("&");
         }
-
-        let bodyHash = "";
-        let bodyLength = "";
+        let bodyHash = "", bodyLength = "";
         if (body != null) {
             const bb = strToBytes(body);
             const trimmed = bb.length > 102400 ? bb.slice(0, 102400) : bb;
             bodyHash   = md5Hex(trimmed);
             bodyLength = bb.length.toString();
         }
-
         return [method.toUpperCase(), accept || "", contentType || "", bodyLength, timestamp.toString(), bodyHash, canonicalUrl].join("\n");
     }
-
-    // x-tr-signature: "<timestamp>|2|<base64(hmacMD5(canonical))>"
     function makeXTrSignature(method, accept, contentType, url, body, useAlt) {
         const ts = Date.now();
         const canonical = buildCanonical(method, accept, contentType, url, body, ts);
@@ -239,8 +196,7 @@
         return `${ts}|2|${bytesToBase64(sig)}`;
     }
 
-    // ── x-client-info builder ─────────────────────────────────────────────────────
-
+    // ── Client-info builder ───────────────────────────────────────────────────────
     function makeClientInfo(pkg, vn, vc, region, gaid, bm, extra) {
         return JSON.stringify(Object.assign({
             package_name: pkg, version_name: vn, version_code: vc,
@@ -253,7 +209,6 @@
     }
 
     // ── Header factories ──────────────────────────────────────────────────────────
-
     function getHeaders(url) {
         const bm = randomBM();
         return {
@@ -268,7 +223,6 @@
             "x-play-mode": "2",
         };
     }
-
     function postHeaders(url, body) {
         const bm = randomBM();
         return {
@@ -283,7 +237,6 @@
             "x-play-mode": "2",
         };
     }
-
     function playHeaders(url, token) {
         const bm = randomBM();
         const extra = { install_ch: "ps", "X-Play-Mode": "1", "X-Idle-Data": "1", "X-Family-Mode": "0", "X-Content-Mode": "0" };
@@ -299,7 +252,6 @@
             "x-client-status": "0",
         };
     }
-
     function subHeaders(url, token) {
         const bm = randomBM();
         const extra = { install_ch: "ps", "X-Play-Mode": "1", "X-Idle-Data": "1", "X-Family-Mode": "0", "X-Content-Mode": "0" };
@@ -316,13 +268,11 @@
     }
 
     // ── HTTP wrappers ─────────────────────────────────────────────────────────────
-
     async function apiGet(url) {
         const res = await http_get(url, getHeaders(url));
         if (res.status !== 200) throw new Error(`GET ${res.status}: ${url}`);
         return JSON.parse(res.body);
     }
-
     async function apiPost(url, body) {
         const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
         const res = await http_post(url, postHeaders(url, bodyStr), bodyStr);
@@ -330,17 +280,14 @@
         return JSON.parse(res.body);
     }
 
-    // ── Quality / type helpers ─────────────────────────────────────────────────────
-
+    // ── Helpers ───────────────────────────────────────────────────────────────────
     function topQuality(s) {
         for (const q of ["2160", "1440", "1080", "720", "480", "360", "240"]) {
             if ((s || "").includes(q)) return q + "p";
         }
         return "Auto";
     }
-
     function subjectTypeStr(n) { return (n === 2 || n === 7) ? "series" : "movie"; }
-
     function mapItem(item) {
         if (!item) return null;
         const title = (item.title || "").split("[")[0].trim();
@@ -354,7 +301,6 @@
             score: parseFloat(item.imdbRatingValue) || undefined,
         });
     }
-
     function parseDuration(dur) {
         if (!dur) return undefined;
         const m = /(\d+)h\s*(\d+)m/.exec(dur);
@@ -364,64 +310,58 @@
     }
 
     // ── Home categories ───────────────────────────────────────────────────────────
-
     const HOME_CATS = [
-        { data: "4516404531735022304",                              name: "Trending" },
-        { data: "5692654647815587592",                              name: "Trending in Cinema" },
-        { data: "414907768299210008",                               name: "Bollywood" },
-        { data: "3859721901924910512",                              name: "South Indian" },
-        { data: "8019599703232971616",                              name: "Hollywood" },
-        { data: "4741626294545400336",                              name: "Top Series This Week" },
-        { data: "8434602210994128512",                              name: "Anime" },
-        { data: "1255898847918934600",                              name: "Reality TV" },
-        { data: "4903182713986896328",                              name: "Indian Drama" },
-        { data: "7878715743607948784",                              name: "Korean Drama" },
-        { data: "8788126208987989488",                              name: "Chinese Drama" },
-        { data: "3910636007619709856",                              name: "Western TV" },
-        { data: "5177200225164885656",                              name: "Turkish Drama" },
-        { data: "1|1",                                              name: "Movies" },
-        { data: "1|2",                                              name: "Series" },
-        { data: "1|1006",                                           name: "Anime (All)" },
-        { data: "1|1;country=India",                               name: "Indian Movies" },
-        { data: "1|2;country=India",                               name: "Indian Series" },
-        { data: "1|1;classify=Hindi dub;country=United States",    name: "USA Movies" },
-        { data: "1|2;classify=Hindi dub;country=United States",    name: "USA Series" },
-        { data: "1|1;country=Japan",                               name: "Japan Movies" },
-        { data: "1|2;country=Japan",                               name: "Japan Series" },
-        { data: "1|1;country=Korea",                               name: "Korean Movies" },
-        { data: "1|2;country=Korea",                               name: "Korean Series" },
-        { data: "1|1;country=China",                               name: "China Movies" },
-        { data: "1|2;country=China",                               name: "China Series" },
-        { data: "1|1;country=Nigeria",                             name: "Nollywood Movies" },
-        { data: "1|2;country=Nigeria",                             name: "Nollywood Series" },
-        { data: "1|1;classify=Hindi dub;genre=Action",             name: "Action Movies" },
-        { data: "1|1;classify=Hindi dub;genre=Crime",              name: "Crime Movies" },
-        { data: "1|1;classify=Hindi dub;genre=Comedy",             name: "Comedy Movies" },
-        { data: "1|1;classify=Hindi dub;genre=Romance",            name: "Romance Movies" },
-        { data: "1|2;classify=Hindi dub;genre=Crime",              name: "Crime Series" },
-        { data: "1|2;classify=Hindi dub;genre=Comedy",             name: "Comedy Series" },
-        { data: "1|2;classify=Hindi dub;genre=Romance",            name: "Romance Series" },
+        { data: "4516404531735022304",                           name: "Trending" },
+        { data: "5692654647815587592",                           name: "Trending in Cinema" },
+        { data: "414907768299210008",                            name: "Bollywood" },
+        { data: "3859721901924910512",                           name: "South Indian" },
+        { data: "8019599703232971616",                           name: "Hollywood" },
+        { data: "4741626294545400336",                           name: "Top Series This Week" },
+        { data: "8434602210994128512",                           name: "Anime" },
+        { data: "1255898847918934600",                           name: "Reality TV" },
+        { data: "4903182713986896328",                           name: "Indian Drama" },
+        { data: "7878715743607948784",                           name: "Korean Drama" },
+        { data: "8788126208987989488",                           name: "Chinese Drama" },
+        { data: "3910636007619709856",                           name: "Western TV" },
+        { data: "5177200225164885656",                           name: "Turkish Drama" },
+        { data: "1|1",                                           name: "Movies" },
+        { data: "1|2",                                           name: "Series" },
+        { data: "1|1006",                                        name: "Anime (All)" },
+        { data: "1|1;country=India",                            name: "Indian Movies" },
+        { data: "1|2;country=India",                            name: "Indian Series" },
+        { data: "1|1;classify=Hindi dub;country=United States", name: "USA Movies" },
+        { data: "1|2;classify=Hindi dub;country=United States", name: "USA Series" },
+        { data: "1|1;country=Japan",                            name: "Japan Movies" },
+        { data: "1|2;country=Japan",                            name: "Japan Series" },
+        { data: "1|1;country=Korea",                            name: "Korean Movies" },
+        { data: "1|2;country=Korea",                            name: "Korean Series" },
+        { data: "1|1;country=China",                            name: "China Movies" },
+        { data: "1|2;country=China",                            name: "China Series" },
+        { data: "1|1;country=Nigeria",                          name: "Nollywood Movies" },
+        { data: "1|2;country=Nigeria",                          name: "Nollywood Series" },
+        { data: "1|1;classify=Hindi dub;genre=Action",          name: "Action Movies" },
+        { data: "1|1;classify=Hindi dub;genre=Crime",           name: "Crime Movies" },
+        { data: "1|1;classify=Hindi dub;genre=Comedy",          name: "Comedy Movies" },
+        { data: "1|1;classify=Hindi dub;genre=Romance",         name: "Romance Movies" },
+        { data: "1|2;classify=Hindi dub;genre=Crime",           name: "Crime Series" },
+        { data: "1|2;classify=Hindi dub;genre=Comedy",          name: "Comedy Series" },
+        { data: "1|2;classify=Hindi dub;genre=Romance",         name: "Romance Series" },
     ];
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  getHome
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ── getHome ───────────────────────────────────────────────────────────────────
     async function getHome(cb) {
         try {
             const PER_PAGE = 15;
             const results = {};
-
             await Promise.all(HOME_CATS.map(async ({ data: catData, name: catName }) => {
                 try {
                     let items = [];
-
                     if (catData.includes("|")) {
                         const url = `${API_BASE}/wefeed-mobile-bff/subject-api/list`;
-                        const mainPart = catData.split(";")[0];
-                        const pipeIdx  = mainPart.indexOf("|");
-                        const pgStr    = mainPart.slice(0, pipeIdx);
+                        const mainPart  = catData.split(";")[0];
+                        const pipeIdx   = mainPart.indexOf("|");
                         const channelId = mainPart.slice(pipeIdx + 1);
-                        const pg = parseInt(pgStr) || 1;
+                        const pg = parseInt(mainPart.slice(0, pipeIdx)) || 1;
                         const opts = {};
                         catData.split(";").slice(1).forEach(seg => {
                             const eq = seg.indexOf("=");
@@ -436,60 +376,58 @@
                             sort:     opts["sort"]     || "ForYou",
                         });
                         const json = await apiPost(url, body);
-                        const raw  = (json.data && (json.data.items || json.data.subjects)) || [];
+                        const raw = (json.data && (json.data.items || json.data.subjects)) || [];
                         items = raw.map(mapItem).filter(Boolean);
                     } else {
                         const url = `${API_BASE}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${encodeURIComponent(catData)}&page=1&perPage=${PER_PAGE}`;
                         const json = await apiGet(url);
-                        const raw  = (json.data && (json.data.items || json.data.subjects)) || [];
+                        const raw = (json.data && (json.data.items || json.data.subjects)) || [];
                         items = raw.map(mapItem).filter(Boolean);
                     }
-
                     if (items.length > 0) results[catName] = items;
                 } catch (_) {}
             }));
-
             const ordered = {};
             if (results["Trending"]) ordered["Trending"] = results["Trending"];
             for (const k of Object.keys(results)) {
                 if (k !== "Trending") ordered[k] = results[k];
             }
-
             if (Object.keys(ordered).length === 0) {
                 return cb({ success: false, errorCode: "SITE_OFFLINE", message: "All categories returned no data" });
             }
-
             cb({ success: true, data: ordered });
         } catch (e) {
             cb({ success: false, errorCode: "SITE_OFFLINE", message: e.message });
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  search
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ── search ────────────────────────────────────────────────────────────────────
     async function search(query, cb) {
         try {
             const url  = `${API_BASE}/wefeed-mobile-bff/subject-api/search/v2`;
             const body = JSON.stringify({ page: 1, perPage: 20, keyword: query });
             const json = await apiPost(url, body);
-            const groups = (json.data && json.data.results) || [];
-            const items  = [];
-            for (const g of groups) {
+            const d = json.data || {};
+            const items = [];
+            for (const g of (d.results || [])) {
                 for (const s of (g.subjects || [])) {
                     const item = mapItem(s);
                     if (item) items.push(item);
                 }
             }
+            if (items.length === 0) {
+                for (const s of (d.subjects || d.items || [])) {
+                    const item = mapItem(s);
+                    if (item) items.push(item);
+                }
+            }
             cb({ success: true, data: items });
-        } catch (e) {
-            cb({ success: false, errorCode: "PARSE_ERROR", message: e.message });
+        } catch (_) {
+            cb({ success: true, data: [] });
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  load
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ── load ──────────────────────────────────────────────────────────────────────
     async function load(url, cb) {
         try {
             let id = url;
@@ -522,7 +460,6 @@
                 for (const dub of (data.dubs || [])) {
                     if (dub.subjectId && !allIds.includes(dub.subjectId)) allIds.push(dub.subjectId);
                 }
-
                 const epMap = {};
                 await Promise.all(allIds.map(async sid => {
                     try {
@@ -535,7 +472,6 @@
                         }
                     } catch (_) {}
                 }));
-
                 const episodes = [];
                 for (const sn of Object.keys(epMap).map(Number).sort((a,b) => a-b)) {
                     for (const ep of [...epMap[sn]].sort((a,b) => a-b)) {
@@ -548,7 +484,6 @@
                 if (episodes.length === 0) {
                     episodes.push(new Episode({ name: "Episode 1", season: 1, episode: 1, url: `${id}|1|1`, posterUrl: poster }));
                 }
-
                 return cb({ success: true, data: new MultimediaItem({
                     title, url: detailUrl, posterUrl: poster,
                     type: "series", year, score, duration, description: desc, cast, episodes,
@@ -560,15 +495,22 @@
                 type: "movie", year, score, duration, description: desc, cast,
                 episodes: [new Episode({ name: "Full Movie", season: 1, episode: 1, url: `${id}|0|0`, posterUrl: poster })],
             }) });
-
         } catch (e) {
             cb({ success: false, errorCode: "PARSE_ERROR", message: e.message });
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  loadStreams
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ── loadStreams ───────────────────────────────────────────────────────────────
+    // dataStr = "subjectId|season|episode"
+    //
+    // CRITICAL flow (matches Kotlin exactly):
+    //  1. GET subject detail with MBOX getHeaders  → x-user header → Bearer token
+    //     (API only returns x-user when MBOX UA is used — NOT oneroom/playHeaders)
+    //  2. Collect ALL dub subjectIds (no lanName required, just like Kotlin)
+    //  3. GET play-info per dub with ONEROOM playHeaders + Bearer token
+    //  4. StreamResult uses field "source" (not "quality") per SkyStream SDK
+    //  5. Fetch captions from both caption endpoints
+    //  6. Fallback to resourceDetectors when streams[] is empty
     async function loadStreams(dataStr, cb) {
         try {
             const parts = dataStr.split("|");
@@ -582,53 +524,50 @@
             const season  = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
             const episode = parts.length > 2 ? (parseInt(parts[2]) || 0) : 0;
 
+            // Step 1 — MBOX subject detail → token
             const subjectUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/get?subjectId=${encodeURIComponent(sid0)}`;
-            const subHdr = playHeaders(subjectUrl, null);
-            const subRes = await http_get(subjectUrl, subHdr);
+            const subRes = await http_get(subjectUrl, getHeaders(subjectUrl));
 
             let token = null;
-            const dubList = [{ id: sid0, lang: "Original" }];
+            const dubIds = [sid0];
 
             if (subRes.status === 200) {
                 let sj; try { sj = JSON.parse(subRes.body); } catch (_) {}
                 if (sj && sj.data) {
-                    const dubs = sj.data.dubs || [];
-                    let origLang = "Original";
-                    const extras = [];
-                    for (const d of dubs) {
-                        if (d.subjectId === sid0) origLang = d.lanName || "Original";
-                        else if (d.subjectId && d.lanName) extras.push({ id: d.subjectId, lang: d.lanName });
+                    for (const d of (sj.data.dubs || [])) {
+                        if (d.subjectId && !dubIds.includes(d.subjectId)) dubIds.push(d.subjectId);
                     }
-                    dubList[0].lang = origLang;
-                    dubList.push(...extras);
                 }
                 const xu = subRes.headers && (subRes.headers["x-user"] || subRes.headers["X-User"]);
                 if (xu) { try { token = JSON.parse(xu).token || null; } catch (_) {} }
             }
 
+            // Steps 2–5 — streams + captions for every dub
             const streams   = [];
             const subtitles = [];
 
-            await Promise.all(dubList.map(async ({ id: sid, lang }) => {
+            await Promise.all(dubIds.map(async (sid, idx) => {
+                const langLabel = idx === 0 ? "Original" : `Dub ${idx}`;
                 try {
                     const playUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/play-info?subjectId=${encodeURIComponent(sid)}&se=${season}&ep=${episode}`;
-                    const ph  = playHeaders(playUrl, token);
-                    const pr  = await http_get(playUrl, ph);
+                    const pr = await http_get(playUrl, playHeaders(playUrl, token));
                     if (pr.status !== 200) return;
-
                     let pj; try { pj = JSON.parse(pr.body); } catch (_) { return; }
                     const rawStreams = (pj.data && pj.data.streams) || [];
-                    const langLabel  = lang.replace(/dub/gi, "Audio");
 
                     for (const s of rawStreams) {
                         const sUrl = s.url; if (!sUrl) continue;
-                        const quality    = topQuality(s.resolutions || "");
-                        const signCookie = s.signCookie || null;
-                        const streamId   = s.id || `${sid}|${season}|${episode}`;
-                        const hdrs = { "Referer": API_BASE };
-                        if (signCookie) hdrs["Cookie"] = signCookie;
+                        const qual     = topQuality(s.resolutions || "");
+                        const streamId = s.id || `${sid}|${season}|${episode}`;
+                        const hdrs = { Referer: API_BASE };
+                        if (s.signCookie) hdrs["Cookie"] = s.signCookie;
 
-                        streams.push(new StreamResult({ url: sUrl, quality, headers: hdrs }));
+                        streams.push(new StreamResult({
+                            name: `MovieBox · ${langLabel}`,
+                            url: sUrl,
+                            source: qual,          // SkyStream SDK uses "source", not "quality"
+                            headers: hdrs,
+                        }));
 
                         try {
                             const c1 = `${API_BASE}/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=${encodeURIComponent(sid)}&streamId=${encodeURIComponent(streamId)}`;
@@ -636,7 +575,7 @@
                             if (cr1.status === 200) {
                                 let cj; try { cj = JSON.parse(cr1.body); } catch (_) {}
                                 for (const cap of ((cj && cj.data && cj.data.extCaptions) || [])) {
-                                    if (cap.url) subtitles.push({ url: cap.url, label: `${cap.language || cap.lanName || "Unknown"} (${langLabel})`, lang: cap.lan || "un" });
+                                    if (cap.url) subtitles.push({ url: cap.url, label: `${cap.language || cap.lanName || cap.lan || "Sub"} (${langLabel})`, lang: cap.lan || "un" });
                                 }
                             }
                         } catch (_) {}
@@ -647,24 +586,26 @@
                             if (cr2.status === 200) {
                                 let cj; try { cj = JSON.parse(cr2.body); } catch (_) {}
                                 for (const cap of ((cj && cj.data && cj.data.extCaptions) || [])) {
-                                    if (cap.url) subtitles.push({ url: cap.url, label: `${cap.lan || cap.lanName || "Unknown"} (${langLabel})`, lang: cap.lan || "un" });
+                                    if (cap.url) subtitles.push({ url: cap.url, label: `${cap.lan || cap.lanName || "Sub"} (${langLabel})`, lang: cap.lan || "un" });
                                 }
                             }
                         } catch (_) {}
                     }
 
+                    // Step 6 — resourceDetectors fallback
                     if (rawStreams.length === 0) {
                         try {
                             const fbUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/get?subjectId=${encodeURIComponent(sid)}`;
-                            const fbRes = await http_get(fbUrl, playHeaders(fbUrl, token));
+                            const fbRes = await http_get(fbUrl, getHeaders(fbUrl));
                             if (fbRes.status === 200) {
                                 let fj; try { fj = JSON.parse(fbRes.body); } catch (_) {}
                                 for (const det of ((fj && fj.data && fj.data.resourceDetectors) || [])) {
                                     for (const v of (det.resolutionList || [])) {
                                         if (v.resourceLink) {
                                             streams.push(new StreamResult({
+                                                name: `MovieBox · ${langLabel} (Detector)`,
                                                 url: v.resourceLink,
-                                                quality: (v.resolution || 0) + "p",
+                                                source: (v.resolution || 0) + "p",
                                                 headers: { Referer: API_BASE },
                                             }));
                                         }
@@ -676,15 +617,13 @@
                 } catch (_) {}
             }));
 
-            const finalStreams = streams.map(s => { s.subtitles = subtitles; return s; });
-            cb({ success: true, data: finalStreams });
-
+            for (const s of streams) s.subtitles = subtitles;
+            cb({ success: true, data: streams });
         } catch (e) {
             cb({ success: false, errorCode: "PARSE_ERROR", message: e.message });
         }
     }
 
-    // ── Exports ───────────────────────────────────────────────────────────────────
     globalThis.getHome    = getHome;
     globalThis.search     = search;
     globalThis.load       = load;
