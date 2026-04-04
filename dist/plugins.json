@@ -1,25 +1,23 @@
 [
   {
-    "name": "Bollyflix",
-    "id": "bollyflix",
-    "version": "1.0.0",
-    "author": "SaurabhKaperwan",
-    "description": "Stream Bollywood, Hollywood, Anime and Web Series from Bollyflix",
-    "iconUrl": "https://bollyflix.frl/favicon.ico",
+    "packageName": "dev.phisher.multimovies",
+    "name": "BollyFlix",
+    "version": 1,
     "baseUrl": "https://bollyflix.frl",
-    "language": "hi",
-    "types": [
-      "movie",
-      "series",
-      "anime"
+    "description": "MultiMovies - Bollywood, Hollywood, South Indian Movies and TV Shows",
+    "authors": [
+      "phisher98"
     ],
-    "capabilities": [
-      "search",
-      "home",
-      "load",
-      "streams"
+    "languages": [
+      "en",
+      "hi"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/bollyflix.sky"
+    "categories": [
+      "Movie",
+      "TvSeries",
+      "Anime"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.phisher.multimovies.sky"
   },
   {
     "packageName": "dev.skystream.dudefilms",
