@@ -5,7 +5,7 @@
   // manifest is injected at runtime by SkyStream
 
   // ─────────────────────────────────────────────────────
-  // CONFIGURATION & CONSTANTS
+  // CONFIGURATION
   // ─────────────────────────────────────────────────────
   const UA = "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)";
   
@@ -20,16 +20,14 @@
   const SECRET_KEY_DEFAULT = atob("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==");
   const SECRET_KEY_ALT = atob("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==");
 
-  // Device generation (randomized per session)
+  // Device ID (randomized per session)
   const deviceId = Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
 
   const brandModels = {
-    "Samsung": ["SM-S918B", "SM-A528B", "SM-M336B"],
-    "Xiaomi": ["2201117TI", "M2012K11AI", "Redmi Note 11"],
-    "OnePlus": ["LE2111", "CPH2449", "IN2023"],
-    "Google": ["Pixel 6", "Pixel 7", "Pixel 8"],
-    "Realme": ["RMX3085", "RMX3360", "RMX3551"]
+    "Samsung": ["SM-S918B", "SM-A528B"],
+    "Xiaomi": ["2201117TI", "M2012K11AI"],
+    "OnePlus": ["LE2111", "CPH2449"]
   };
 
   function randomBrandModel() {
@@ -40,40 +38,106 @@
   }
 
   // ─────────────────────────────────────────────────────
-  // CRYPTOGRAPHIC HELPERS (ported from Kotlin)
+  // 🔐 PURE-JS MD5 + HMAC-MD5 (No external deps)
   // ─────────────────────────────────────────────────────
   
+  // MD5 implementation (compact, ~1.2KB minified)
   function md5(input) {
-    // SkyStream provides crypto.md5 via global crypto helper
-    // Fallback to Web Crypto API if needed
-    if (typeof crypto !== 'undefined' && crypto.subtle) {
-      const encoder = new TextEncoder();      const data = encoder.encode(input);
-      return crypto.subtle.digest('MD5', data).then(buffer => {
-        return Array.from(new Uint8Array(buffer))
-          .map(b => b.toString(16).padStart(2, '0')).join('');
-      });
+    function rotateLeft(x, n) { return (x << n) | (x >>> (32 - n)); }
+    function addUnsigned(x, y) { return (x + y) >>> 0; }
+    
+    const k = [
+      0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,      0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+      0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
+      0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+      0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
+      0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+      0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+      0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+      0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
+      0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+      0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
+      0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+      0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
+      0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+      0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
+      0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391
+    ];
+    
+    let msg = new TextEncoder().encode(input);
+    const ml = msg.length * 8;
+    msg = new Uint8Array([...msg, 0x80, ...new Uint8Array((55 - ((msg.length + 1) % 64)) % 64)]);
+    
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    view.setUint32(0, ml & 0xFFFFFFFF, true);
+    view.setUint32(4, Math.floor(ml / 0x100000000), true);
+    msg = new Uint8Array([...msg, ...new Uint8Array(buffer)]);
+    
+    let a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+    
+    for (let i = 0; i < msg.length; i += 64) {
+      const M = [];
+      for (let j = 0; j < 16; j++) M[j] = msg[i + j*4] | (msg[i + j*4 + 1] << 8) | (msg[i + j*4 + 2] << 16) | (msg[i + j*4 + 3] << 24);
+      
+      let [A, B, C, D] = [a, b, c, d];
+      
+      for (let j = 0; j < 64; j++) {
+        let [F, g] = [0, 0];
+        if (j < 16) { F = (B & C) | (~B & D); g = j; }
+        else if (j < 32) { F = (D & B) | (~D & C); g = (5*j + 1) % 16; }
+        else if (j < 48) { F = B ^ C ^ D; g = (3*j + 5) % 16; }
+        else { F = C ^ (B | ~D); g = (7*j) % 16; }
+        
+        const temp = addUnsigned(addUnsigned(addUnsigned(addUnsigned(A, F), k[j]), M[g]), rotateLeft(addUnsigned(B, F), [7,12,17,22,5,9,14,20,4,11,16,23,6,10,15,21][Math.floor(j/16)*4 + j%4]));
+        [A, B, C, D] = [D, temp, B, C];
+      }
+      
+      a = addUnsigned(a, A); b = addUnsigned(b, B); c = addUnsigned(c, C); d = addUnsigned(d, D);
     }
-    // Fallback: use SkyStream's built-in if available
-    return globalThis.crypto?.md5?.(input) || input;
+    
+    return [a, b, c, d].map(x => x.toString(16).padStart(8, '0')).join('');  }
+
+  // HMAC-MD5 implementation
+  function hmacMD5(key, message) {
+    const blocksize = 64;
+    let k = new TextEncoder().encode(key);
+    
+    if (k.length > blocksize) {
+      k = new Uint8Array(md5(key).match(/.{2}/g).map(b => parseInt(b, 16)));
+    }
+    
+    const oKeyPad = new Uint8Array(blocksize);
+    const iKeyPad = new Uint8Array(blocksize);
+    
+    for (let i = 0; i < blocksize; i++) {
+      oKeyPad[i] = 0x5c ^ (k[i] || 0);
+      iKeyPad[i] = 0x36 ^ (k[i] || 0);
+    }
+    
+    return md5(new TextDecoder().decode(oKeyPad) + md5(new TextDecoder().decode(iKeyPad) + message));
   }
 
+  // ─────────────────────────────────────────────────────
+  // SIGNATURE GENERATION (ported from Kotlin)
+  // ─────────────────────────────────────────────────────
+  
   function reverseString(str) {
     return str.split('').reverse().join('');
   }
 
-  function generateXClientToken(hardcodedTimestamp = null) {
-    const timestamp = hardcodedTimestamp?.toString() || Date.now().toString();
-    const reversed = reverseString(timestamp);
-    // Note: md5 is async in Web Crypto, but SkyStream may provide sync version
-    const hash = globalThis.crypto?.md5?.(reversed) || reversed; 
-    return `${timestamp},${hash}`;
+  function generateXClientToken(timestamp) {
+    const ts = timestamp.toString();
+    const reversed = reverseString(ts);
+    const hash = md5(reversed);
+    return `${ts},${hash}`;
   }
 
   function buildCanonicalString(method, accept, contentType, url, body, timestamp) {
     const parsed = new URL(url, manifest.baseUrl);
     const path = parsed.pathname || "";
     
-    // Sort query parameters
+    // Sort query parameters alphabetically
     const params = new URLSearchParams(parsed.search);
     const sortedQuery = Array.from(params.entries())
       .sort(([a], [b]) => a.localeCompare(b))
@@ -81,10 +145,10 @@
       .join('&');
     
     const canonicalUrl = sortedQuery ? `${path}?${sortedQuery}` : path;
-    
+        // Body hash (first 100KB only, per Kotlin impl)
     const bodyBytes = body ? new TextEncoder().encode(body) : null;
     const bodyHash = bodyBytes 
-      ? (globalThis.crypto?.md5?.(new TextDecoder().decode(bodyBytes.slice(0, 102400))) || "")
+      ? md5(new TextDecoder().decode(bodyBytes.slice(0, 102400)))
       : "";
     
     const bodyLength = bodyBytes?.length?.toString() || "";
@@ -92,21 +156,14 @@
     return `${method.toUpperCase()}\n${accept || ""}\n${contentType || ""}\n${bodyLength}\n${timestamp}\n${bodyHash}\n${canonicalUrl}`;
   }
 
-  async function generateXTrSignature(method, accept, contentType, url, body = null, useAltKey = false, hardcodedTimestamp = null) {
-    const timestamp = hardcodedTimestamp || Date.now();
-    const canonical = buildCanonicalString(method, accept, contentType, url, body, timestamp);
+  function generateXTrSignature(method, accept, contentType, url, body = null, useAltKey = false, timestamp = null) {
+    const ts = timestamp || Date.now();
+    const canonical = buildCanonicalString(method, accept, contentType, url, body, ts);
     const secret = useAltKey ? SECRET_KEY_ALT : SECRET_KEY_DEFAULT;
-        // SkyStream may provide crypto.hmac or we use Web Crypto
-    let signature;
-    if (globalThis.crypto?.hmac) {
-      signature = await globalThis.crypto.hmac('MD5', secret, canonical);
-    } else {
-      // Fallback: simple hash (not cryptographically secure but works for API)
-      signature = globalThis.crypto?.md5?.(canonical + secret) || canonical;
-    }
     
+    const signature = hmacMD5(secret, canonical);
     const signatureB64 = btoa(signature);
-    return `${timestamp}|2|${signatureB64}`;
+    return `${ts}|2|${signatureB64}`;
   }
 
   function getClientInfoHeaders(brand, model, extra = {}) {
@@ -131,27 +188,22 @@
   }
 
   // ─────────────────────────────────────────────────────
-  // NETWORK HELPERS
+  // 🌐 NETWORK HELPERS (SkyStream API compliant)
   // ─────────────────────────────────────────────────────
   
   async function apiRequest(url, options = {}) {
     const { method = 'GET', body = null, headers = {}, useAltKey = false } = options;
     
-    const timestamp = Date.now();
-    const xClientToken = generateXClientToken(timestamp);
+    const timestamp = Date.now();    const xClientToken = generateXClientToken(timestamp);
     const contentType = body ? "application/json; charset=utf-8" : "application/json";
     
-    const xTrSignature = await generateXTrSignature(
-      method, 
-      "application/json", 
-      contentType, 
-      url,       body, 
-      useAltKey,
-      timestamp
+    const xTrSignature = generateXTrSignature(
+      method, "application/json", contentType, url, body, useAltKey, timestamp
     );
 
     const { brand, model } = randomBrandModel();
     
+    // SkyStream http_get/http_post signature: (url, headers, body?)
     const requestHeaders = {
       ...BASE_HEADERS,
       ...headers,
@@ -160,11 +212,12 @@
       "x-client-info": getClientInfoHeaders(brand, model)
     };
 
-    const response = await http_get(url, {
-      method,
-      headers: requestHeaders,
-      body: body ? JSON.stringify(body) : undefined
-    });
+    let response;
+    if (method.toUpperCase() === 'POST') {
+      response = await http_post(url, requestHeaders, body ? JSON.stringify(body) : "");
+    } else {
+      response = await http_get(url, requestHeaders);
+    }
 
     if (response.status !== 200) {
       throw new Error(`API Error ${response.status}: ${response.body?.substring(0, 200)}`);
@@ -178,10 +231,10 @@
   }
 
   // ─────────────────────────────────────────────────────
-  // DATA PARSING HELPERS
+  // 📦 DATA PARSING
   // ─────────────────────────────────────────────────────
   
-  function parseSearchItem(item, baseUrl) {
+  function parseSearchItem(item) {
     const title = item.title?.toString()?.split('[')[0]?.trim();
     const id = item.subjectId?.toString();
     const coverImg = item.cover?.url;
@@ -190,33 +243,30 @@
     if (!title || !id) return null;
     
     const type = subjectType === 2 ? "series" : "movie";
-    
-    return new MultimediaItem({
+        return new MultimediaItem({
       title: title,
-      url: id, // Store subjectId as URL for load()
-      posterUrl: coverImg,      type: type,
+      url: id,
+      posterUrl: coverImg,
+      type: type,
       contentType: type,
       score: item.imdbRatingValue ? parseFloat(item.imdbRatingValue) * 10 : undefined
     });
   }
 
   function getHighestQuality(resolutionsStr) {
-    if (!resolutionsStr) return null;
+    if (!resolutionsStr) return "Auto";
     const qualities = [
       ["2160", "2160p"], ["1440", "1440p"], ["1080", "1080p"],
-      ["720", "720p"], ["480", "480p"], ["360", "360p"], ["240", "240p"]
+      ["720", "720p"], ["480", "480p"], ["360", "360p"]
     ];
-    
     for (const [label, mapped] of qualities) {
-      if (resolutionsStr.toLowerCase().includes(label)) {
-        return mapped;
-      }
+      if (resolutionsStr.toLowerCase().includes(label)) return mapped;
     }
-    return null;
+    return "Auto";
   }
 
   // ─────────────────────────────────────────────────────
-  // 🎯 CORE FUNCTION: getHome
+  // 🏠 getHome
   // ─────────────────────────────────────────────────────
   
   async function getHome(cb) {
@@ -230,9 +280,7 @@
         { name: "Top Series This Week", data: "4741626294545400336", isRanking: true },
         { name: "Anime", data: "8434602210994128512", isRanking: true },
         { name: "Movies", data: "1|1", isRanking: false },
-        { name: "Series", data: "1|2", isRanking: false },
-        { name: "Indian Movies", data: "1|1;country=India", isRanking: false },
-        { name: "Indian Series", data: "1|2;country=India", isRanking: false }
+        { name: "Series", data: "1|2", isRanking: false }
       ];
 
       const homeData = {};
@@ -242,35 +290,21 @@
           let items = [];
           
           if (section.isRanking) {
-            // Ranking list endpoint
-            const url = `${manifest.baseUrl}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${section.data}&page=1&perPage=15`;            const response = await apiRequest(url, { method: 'GET' });
-            const dataItems = response.data?.items || response.data?.subjects || [];
-            items = dataItems.map(item => parseSearchItem(item)).filter(Boolean);
+            const url = `${manifest.baseUrl}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${section.data}&page=1&perPage=15`;
+            const response = await apiRequest(url, { method: 'GET' });
+            const dataItems = response.data?.items || response.data?.subjects || [];            items = dataItems.map(parseSearchItem).filter(Boolean);
           } else {
-            // Subject list endpoint (with filters)
             const url = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/list`;
-            
             const [pg, channelId] = section.data.split('|');
-            const filters = section.data.split(';').slice(1).reduce((acc, f) => {
-              const [k, v] = f.split('=');
-              if (k && v) acc[k] = v;
-              return acc;
-            }, {});
-            
             const body = {
               page: parseInt(pg) || 1,
               perPage: 15,
               channelId: channelId,
-              classify: filters.classify || "All",
-              country: filters.country || "All",
-              year: filters.year || "All",
-              genre: filters.genre || "All",
-              sort: filters.sort || "ForYou"
+              classify: "All", country: "All", year: "All", genre: "All", sort: "ForYou"
             };
-            
             const response = await apiRequest(url, { method: 'POST', body });
-            const dataItems = response.data?.items || response.data?.subjects || [];
-            items = dataItems.map(item => parseSearchItem(item)).filter(Boolean);
+            const dataItems = response.data?.items || [];
+            items = dataItems.map(parseSearchItem).filter(Boolean);
           }
           
           if (items.length > 0) {
@@ -278,7 +312,6 @@
           }
         } catch (e) {
           console.error(`Section [${section.name}] failed:`, e.message);
-          // Continue with other sections
         }
       }
 
@@ -289,10 +322,11 @@
   }
 
   // ─────────────────────────────────────────────────────
-  // 🎯 CORE FUNCTION: search
+  // 🔍 search
   // ─────────────────────────────────────────────────────
   
-  async function search(query, cb) {    try {
+  async function search(query, cb) {
+    try {
       const url = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/search/v2`;
       const body = { page: 1, perPage: 20, keyword: query };
       
@@ -307,20 +341,18 @@
           if (item) searchList.push(item);
         }
       }
-      
-      cb({ success: true, data: searchList });
+            cb({ success: true, data: searchList });
     } catch (e) {
       cb({ success: false, errorCode: "SEARCH_ERROR", message: e.message });
     }
   }
 
   // ─────────────────────────────────────────────────────
-  // 🎯 CORE FUNCTION: load (Metadata)
+  // 📄 load (Metadata)
   // ─────────────────────────────────────────────────────
   
   async function load(url, cb) {
     try {
-      // url is the subjectId from search
       const subjectId = url.toString();
       const detailUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`;
       
@@ -332,29 +364,21 @@
       const title = data.title?.toString()?.split('[')[0]?.trim() || "Unknown";
       const description = data.description;
       const releaseDate = data.releaseDate;
-      const duration = data.duration;
-      const genre = data.genre;
       const coverUrl = data.cover?.url;
       const subjectType = data.subjectType ?? 1;
       
       const type = (subjectType === 2 || subjectType === 7) ? "series" : "movie";
       const year = releaseDate?.substring(0, 4) ? parseInt(releaseDate.substring(0, 4)) : undefined;
       
-      // Parse actors/staff
-      const actors = (data.staffList || [])        .filter(staff => staff.staffType === 1)
-        .map(staff => ({
-          name: staff.name,
-          image: staff.avatarUrl,
-          role: staff.character
-        }));
+      const actors = (data.staffList || [])
+        .filter(staff => staff.staffType === 1)
+        .map(staff => ({ name: staff.name, image: staff.avatarUrl, role: staff.character }));
       
-      const tags = genre?.split(',').map(g => g.trim()).filter(Boolean) || [];
+      const tags = data.genre?.split(',').map(g => g.trim()).filter(Boolean) || [];
       
-      // Parse episodes for series
       let episodes = [];
       
       if (type === "series") {
-        // Collect all subjectIds (original + dubs)
         const allSubjectIds = [subjectId];
         (data.dubs || []).forEach(dub => {
           if (dub.subjectId && !allSubjectIds.includes(dub.subjectId)) {
@@ -362,36 +386,30 @@
           }
         });
         
-        const episodeMap = new Map(); // season -> Set of episode numbers
+        const episodeMap = new Map();
         
         for (const sid of allSubjectIds) {
           try {
-            const seasonUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/season-info?subjectId=${sid}`;
-            const seasonRes = await apiRequest(seasonUrl, { method: 'GET' });
+            const seasonUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/season-info?subjectId=${sid}`;            const seasonRes = await apiRequest(seasonUrl, { method: 'GET' });
             const seasons = seasonRes.data?.seasons || [];
             
             for (const season of seasons) {
               const seasonNum = season.se ?? 1;
               const maxEp = season.maxEp ?? 1;
-              
-              if (!episodeMap.has(seasonNum)) {
-                episodeMap.set(seasonNum, new Set());
-              }
+              if (!episodeMap.has(seasonNum)) episodeMap.set(seasonNum, new Set());
               const epSet = episodeMap.get(seasonNum);
-              for (let ep = 1; ep <= maxEp; ep++) {
-                epSet.add(ep);
-              }
+              for (let ep = 1; ep <= maxEp; ep++) epSet.add(ep);
             }
           } catch (e) {
-            console.warn(`Failed to load seasons for ${sid}:`, e.message);
+            console.warn(`Failed seasons for ${sid}:`, e.message);
           }
         }
         
-        // Build Episode objects
         for (const [seasonNum, epSet] of episodeMap) {
           for (const epNum of Array.from(epSet).sort((a, b) => a - b)) {
-            episodes.push(new Episode({              name: `S${seasonNum}E${epNum}`,
-              url: `${subjectId}|${seasonNum}|${epNum}`, // Encode for loadStreams
+            episodes.push(new Episode({
+              name: `S${seasonNum}E${epNum}`,
+              url: `${subjectId}|${seasonNum}|${epNum}`,
               season: seasonNum,
               episode: epNum,
               posterUrl: coverUrl
@@ -399,30 +417,16 @@
           }
         }
         
-        // Fallback if no episodes found
         if (episodes.length === 0) {
           episodes.push(new Episode({
-            name: "Episode 1",
-            url: `${subjectId}|1|1`,
-            season: 1,
-            episode: 1,
-            posterUrl: coverUrl
+            name: "Episode 1", url: `${subjectId}|1|1`, season: 1, episode: 1, posterUrl: coverUrl
           }));
         }
       }
       
       const item = new MultimediaItem({
-        title: title,
-        url: detailUrl,
-        posterUrl: coverUrl,
-        bannerUrl: coverUrl,
-        type: type,
-        contentType: type,
-        description: description,
-        year: year,
-        tags: tags,
-        cast: actors,
-        episodes: episodes
+        title, url: detailUrl, posterUrl: coverUrl, bannerUrl: coverUrl,
+        type, contentType: type, description, year, tags, cast: actors, episodes
       });
       
       cb({ success: true, data: item });
@@ -432,26 +436,24 @@
   }
 
   // ─────────────────────────────────────────────────────
-  // 🎯 CORE FUNCTION: loadStreams (WITH ENHANCED LABELING)
+  // 🎬 loadStreams (WITH ENHANCED LABELING ✅)
   // ─────────────────────────────────────────────────────
   
-  async function loadStreams(url, cb) {
-    try {
-      // Parse the encoded URL from Episode: "subjectId|season|episode"
+  async function loadStreams(url, cb) {    try {
       const parts = url.toString().split('|');
-      const subjectId = parts[0];      const season = parts.length > 1 ? parseInt(parts[1]) : 0;
+      const subjectId = parts[0];
+      const season = parts.length > 1 ? parseInt(parts[1]) : 0;
       const episode = parts.length > 2 ? parseInt(parts[2]) : 0;
       
-      // First, get the subject info to fetch available dubs/languages
+      // Get subject info for dubs/languages
       const subjectUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`;
       const subjectRes = await apiRequest(subjectUrl, { method: 'GET' });
       const subjectData = subjectRes.data;
       
-      // Build list of subjectIds with their language names
+      // Build source list with languages
       const subjectSources = [];
       let originalLanguage = "Original";
       
-      // Add dubs first
       if (subjectData.dubs && Array.isArray(subjectData.dubs)) {
         for (const dub of subjectData.dubs) {
           const dubId = dub.subjectId;
@@ -463,19 +465,15 @@
           }
         }
       }
-      
-      // Add original as first source (with proper language name)
       subjectSources.unshift({ subjectId: subjectId, language: originalLanguage });
       
       const allStreams = [];
       const seenUrls = new Set();
       
-      // Process each language/source
       for (const { subjectId: srcId, language } of subjectSources) {
         try {
           const playUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/play-info?subjectId=${srcId}&se=${season}&ep=${episode}`;
           
-          // Get auth token from previous response headers if available
           const token = subjectRes.headers?.['x-user'] 
             ? JSON.parse(subjectRes.headers['x-user'])?.token 
             : null;
@@ -484,16 +482,13 @@
           const headers = {
             "Authorization": token ? `Bearer ${token}` : undefined,
             "x-client-info": getClientInfoHeaders(brand, model, {
-              "X-Play-Mode": "1",
-              "X-Idle-Data": "1",
-              "X-Family-Mode": "0",
-              "X-Content-Mode": "0"
-            })          };
+              "X-Play-Mode": "1", "X-Idle-Data": "1", "X-Family-Mode": "0", "X-Content-Mode": "0"
+            })
+          };
           
           const playRes = await apiRequest(playUrl, { method: 'GET', headers });
           const playData = playRes.data;
-          const streams = playData?.streams;
-          
+          const streams = playData?.streams;          
           if (streams && Array.isArray(streams)) {
             for (const stream of streams) {
               const streamUrl = stream.url;
@@ -501,75 +496,70 @@
               seenUrls.add(streamUrl);
               
               const resolutions = stream.resolutions || "";
-              const format = stream.format || "";
-              const signCookie = stream.signCookie;
-              const streamId = stream.id || `${srcId}|${season}|${episode}`;
-              
               const quality = getHighestQuality(resolutions);
+              const signCookie = stream.signCookie;
               
-              // 🎯 ENHANCED STREAM LABELING (Your Key Request)
-              // Format: "Provider (Telugu Audio) 1080p"
+              // 🎯 ENHANCED STREAM LABELING (Your Request)
               const providerName = "MovieBox";
               const audioLabel = language && language.toLowerCase() !== "original" 
                 ? ` (${language.replace(/dub$/i, ' Audio')})` 
                 : "";
-              const qualityLabel = quality ? ` ${quality}` : "";
+              const qualityLabel = quality !== "Auto" ? ` ${quality}` : "";
               
               const streamLabel = `${providerName}${audioLabel}${qualityLabel}`.trim();
               
-              // Determine link type
-              let linkType = "video";
-              if (streamUrl.startsWith("magnet:")) linkType = "magnet";
-              else if (streamUrl.includes(".mpd")) linkType = "dash";
-              else if (streamUrl.includes(".m3u8") || format === "HLS") linkType = "hls";
+              // Determine link type for headers
+              let referer = manifest.baseUrl;
+              if (streamUrl.includes("m3u8")) referer = streamUrl.split('/').slice(0, 3).join('/');
               
               const streamResult = new StreamResult({
                 url: streamUrl,
-                quality: quality || "Auto",
-                source: streamLabel,  // ✅ This is what displays in the UI
-                name: streamLabel,    // ✅ Also set name for compatibility
+                quality: quality,
+                source: streamLabel,  // ✅ This displays in UI as combined label
                 headers: {
-                  "Referer": manifest.baseUrl,
+                  "Referer": referer,
+                  "User-Agent": UA,
                   ...(signCookie ? { "Cookie": signCookie } : {})
                 }
               });
               
               // Add subtitles if available
               try {
+                const streamId = stream.id || `${srcId}|${season}|${episode}`;
                 const subUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=${srcId}&streamId=${streamId}`;
-                const subRes = await apiRequest(subUrl, { method: 'GET', headers: { "Authorization": token ? `Bearer ${token}` : undefined } });                const captions = subRes.data?.extCaptions || [];
+                const subRes = await apiRequest(subUrl, { 
+                  method: 'GET', 
+                  headers: { "Authorization": token ? `Bearer ${token}` : undefined } 
+                });
+                const captions = subRes.data?.extCaptions || [];
                 
                 if (captions.length > 0) {
                   streamResult.subtitles = captions.map(cap => ({
                     url: cap.url,
                     label: `${cap.lanName || cap.language || cap.lan || "Unknown"}${audioLabel}`,
-                    lang: cap.lan || cap.language || "unk"
-                  }));
+                    lang: cap.lan || cap.language || "unk"                  }));
                 }
               } catch (subErr) {
-                // Subtitles are optional, continue
+                // Subtitles optional
               }
               
               allStreams.push(streamResult);
             }
           }
         } catch (srcErr) {
-          console.warn(`Failed to load streams for ${subjectId} (${language}):`, srcErr.message);
+          console.warn(`Failed streams for ${subjectId} (${language}):`, srcErr.message);
           continue;
         }
       }
       
-      // Sort streams: prefer higher quality, then by language preference
+      // Sort: higher quality first, then language preference
       const langPriority = ["Original", "English", "Hindi", "Telugu", "Tamil", "Malayalam", "Kannada", "Bengali"];
       allStreams.sort((a, b) => {
-        // Quality first (higher is better)
         const qA = parseInt(a.quality) || 0;
         const qB = parseInt(b.quality) || 0;
         if (qB !== qA) return qB - qA;
-        
-        // Then language preference
         const extractLang = (src) => {
-          const match = src.match(/\(([^)]+)\)/);
+          const match = src?.match(/\(([^)]+)\)/);
           return match ? match[1].replace(' Audio', '') : "Original";
         };
         const idxA = langPriority.indexOf(extractLang(a.source));
@@ -586,7 +576,8 @@
   // ─────────────────────────────────────────────────────
   // EXPORT TO SKYSTREAM RUNTIME
   // ─────────────────────────────────────────────────────
-    globalThis.getHome = getHome;
+  
+  globalThis.getHome = getHome;
   globalThis.search = search;
   globalThis.load = load;
   globalThis.loadStreams = loadStreams;
