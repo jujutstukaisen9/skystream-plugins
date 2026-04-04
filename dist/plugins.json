@@ -38,6 +38,26 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.dudefilms.skystream.sky"
   },
   {
+    "packageName": "com.moviebox.provider",
+    "name": "MovieBox",
+    "version": 1,
+    "baseUrl": "https://api3.aoneroom.com",
+    "description": "Stream Movies, TV Series, Anime and more",
+    "authors": [
+      "MovieBox"
+    ],
+    "languages": [
+      "hi",
+      "en"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries",
+      "Anime"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.moviebox.provider.sky"
+  },
+  {
     "packageName": "movieblast",
     "name": "MovieBlast",
     "version": 1,
