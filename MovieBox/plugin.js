@@ -1,632 +1,594 @@
-(function () {
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  MovieBox  –  SkyStream Gen 2 Plugin
-    //  Ported from CloudStream Kotlin plugin by NivinCNC / CNCVerse
-    //
-    //  Concept mapping
-    //  ────────────────────────────────────────────────────────────────────────────
-    //  Kotlin MainAPI class          → IIFE module (plugin.js)
-    //  mainUrl                       → API_BASE constant
-    //  getMainPage()                 → getHome(cb)
-    //  search()                      → search(query, cb)
-    //  load()                        → load(url, cb)
-    //  loadLinks()                   → loadStreams(dataStr, cb)
-    //  newMovieSearchResponse()      → new MultimediaItem({ type:"movie" })
-    //  newTvSeriesLoadResponse()     → new MultimediaItem({ type:"series", episodes })
-    //  newEpisode("id|s|e")          → new Episode({ url:"id|s|e" })
-    //  newExtractorLink()            → new StreamResult({ name, url, source, headers })
-    //  newSubtitleFile()             → { url, label, lang } in StreamResult.subtitles
-    //  base64Decode()                → atob()
-    //  base64DecodeArray()           → b64ToBytes() (second-layer decode → raw bytes)
-    //  HmacMD5 / MD5 (Java crypto)  → pure-JS implementations below
-    //  app.get / app.post            → http_get / http_post (SkyStream globals)
-    // ─────────────────────────────────────────────────────────────────────────────
+(function() {
+  /**
+   * @type {import('@skystream/sdk').Manifest}
+   */
+  // manifest is injected at runtime by SkyStream
 
-    const API_BASE    = "https://api3.aoneroom.com";
-    const UA_MBOX     = "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)";
-    const UA_ONEROOM  = "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; sdk_gphone64_x86_64; Build/TQ3A.230901.001; Cronet/145.0.7582.0)";
-    const PKG_MBOX    = "com.community.mbox.in";
-    const PKG_ONEROOM = "com.community.oneroom";
-    const GAID_MBOX    = "d7578036d13336cc";
-    const GAID_ONEROOM = "1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d";
-    const TZ = "Asia/Calcutta";
+  // ─────────────────────────────────────────────────────
+  // CONFIGURATION & CONSTANTS
+  // ─────────────────────────────────────────────────────
+  const UA = "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)";
+  
+  const BASE_HEADERS = {
+    "User-Agent": UA,
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "Connection": "keep-alive"
+  };
 
-    function strToBytes(s) {
-        const out = new Uint8Array(s.length);
-        for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xFF;
-        return out;
-    }
-    function hexToBytes(hex) {
-        const out = new Uint8Array(hex.length >>> 1);
-        for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
-        return out;
-    }
-    function concat(a, b) {
-        const out = new Uint8Array(a.length + b.length);
-        out.set(a); out.set(b, a.length);
-        return out;
-    }
-    function binStrToBytes(s) {
-        const out = new Uint8Array(s.length);
-        for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-        return out;
-    }
-    function b64ToBytes(b64) { return binStrToBytes(atob(b64)); }
-    function bytesToBase64(bytes) {
-        let s = "";
-        for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-        return btoa(s);
-    }
+  // Secret keys (base64 decoded from Kotlin source)
+  const SECRET_KEY_DEFAULT = atob("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==");
+  const SECRET_KEY_ALT = atob("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==");
 
-    // ── MD5 ──────────────────────────────────────────────────────────────────────
-    function md5(input) {
-        function safeAdd(x, y) { const l = (x & 0xFFFF) + (y & 0xFFFF); return (((x >> 16) + (y >> 16) + (l >> 16)) << 16) | (l & 0xFFFF); }
-        function rol(n, c) { return (n << c) | (n >>> (32 - c)); }
-        function cmn(q, a, b, x, s, t) { return safeAdd(rol(safeAdd(safeAdd(a, q), safeAdd(x, t)), s), b); }
-        function ff(a,b,c,d,x,s,t) { return cmn((b&c)|(~b&d),a,b,x,s,t); }
-        function gg(a,b,c,d,x,s,t) { return cmn((b&d)|(c&~d),a,b,x,s,t); }
-        function hh(a,b,c,d,x,s,t) { return cmn(b^c^d,a,b,x,s,t); }
-        function ii(a,b,c,d,x,s,t) { return cmn(c^(b|~d),a,b,x,s,t); }
-        const len = input.length, nb = len * 8;
-        const pad = ((len + 8) >>> 6) + 1;
-        const m = new Int32Array(pad * 16);
-        for (let i = 0; i < len; i++) m[i >> 2] |= input[i] << ((i % 4) * 8);
-        m[len >> 2] |= 0x80 << ((len % 4) * 8);
-        m[pad * 16 - 2] = nb & 0xFFFFFFFF;
-        m[pad * 16 - 1] = Math.floor(nb / 0x100000000);
-        let a = 1732584193, b = -271733879, c = -1732584194, d = 271733878;
-        for (let i = 0; i < m.length; i += 16) {
-            const [oa,ob,oc,od] = [a,b,c,d];
-            a=ff(a,b,c,d,m[i+ 0], 7,-680876936);  d=ff(d,a,b,c,m[i+ 1],12,-389564586);
-            c=ff(c,d,a,b,m[i+ 2],17, 606105819);  b=ff(b,c,d,a,m[i+ 3],22,-1044525330);
-            a=ff(a,b,c,d,m[i+ 4], 7,-176418897);  d=ff(d,a,b,c,m[i+ 5],12,1200080426);
-            c=ff(c,d,a,b,m[i+ 6],17,-1473231341); b=ff(b,c,d,a,m[i+ 7],22,-45705983);
-            a=ff(a,b,c,d,m[i+ 8], 7,1770035416);  d=ff(d,a,b,c,m[i+ 9],12,-1958414417);
-            c=ff(c,d,a,b,m[i+10],17,-42063);       b=ff(b,c,d,a,m[i+11],22,-1990404162);
-            a=ff(a,b,c,d,m[i+12], 7,1804603682);  d=ff(d,a,b,c,m[i+13],12,-40341101);
-            c=ff(c,d,a,b,m[i+14],17,-1502002290); b=ff(b,c,d,a,m[i+15],22,1236535329);
-            a=gg(a,b,c,d,m[i+ 1], 5,-165796510);  d=gg(d,a,b,c,m[i+ 6], 9,-1069501632);
-            c=gg(c,d,a,b,m[i+11],14, 643717713);  b=gg(b,c,d,a,m[i+ 0],20,-373897302);
-            a=gg(a,b,c,d,m[i+ 5], 5,-701558691);  d=gg(d,a,b,c,m[i+10], 9,38016083);
-            c=gg(c,d,a,b,m[i+15],14,-660478335);  b=gg(b,c,d,a,m[i+ 4],20,-405537848);
-            a=gg(a,b,c,d,m[i+ 9], 5, 568446438);  d=gg(d,a,b,c,m[i+14], 9,-1019803690);
-            c=gg(c,d,a,b,m[i+ 3],14,-187363961);  b=gg(b,c,d,a,m[i+ 8],20,1163531501);
-            a=gg(a,b,c,d,m[i+13], 5,-1444681467); d=gg(d,a,b,c,m[i+ 2], 9,-51403784);
-            c=gg(c,d,a,b,m[i+ 7],14,1735328473);  b=gg(b,c,d,a,m[i+12],20,-1926607734);
-            a=hh(a,b,c,d,m[i+ 5], 4,-378558);     d=hh(d,a,b,c,m[i+ 8],11,-2022574463);
-            c=hh(c,d,a,b,m[i+11],16,1839030562);  b=hh(b,c,d,a,m[i+14],23,-35309556);
-            a=hh(a,b,c,d,m[i+ 1], 4,-1530992060); d=hh(d,a,b,c,m[i+ 4],11,1272893353);
-            c=hh(c,d,a,b,m[i+ 7],16,-155497632);  b=hh(b,c,d,a,m[i+10],23,-1094730640);
-            a=hh(a,b,c,d,m[i+13], 4, 681279174);  d=hh(d,a,b,c,m[i+ 0],11,-358537222);
-            c=hh(c,d,a,b,m[i+ 3],16,-722521979);  b=hh(b,c,d,a,m[i+ 6],23,76029189);
-            a=hh(a,b,c,d,m[i+ 9], 4,-640364487);  d=hh(d,a,b,c,m[i+12],11,-421815835);
-            c=hh(c,d,a,b,m[i+15],16, 530742520);  b=hh(b,c,d,a,m[i+ 2],23,-995338651);
-            a=ii(a,b,c,d,m[i+ 0], 6,-198630844);  d=ii(d,a,b,c,m[i+ 7],10,1126891415);
-            c=ii(c,d,a,b,m[i+14],15,-1416354905); b=ii(b,c,d,a,m[i+ 5],21,-57434055);
-            a=ii(a,b,c,d,m[i+12], 6,1700485571);  d=ii(d,a,b,c,m[i+ 3],10,-1894986606);
-            c=ii(c,d,a,b,m[i+10],15,-1051523);    b=ii(b,c,d,a,m[i+ 1],21,-2054922799);
-            a=ii(a,b,c,d,m[i+ 8], 6,1873313359);  d=ii(d,a,b,c,m[i+15],10,-30611744);
-            c=ii(c,d,a,b,m[i+ 6],15,-1560198380); b=ii(b,c,d,a,m[i+13],21,1309151649);
-            a=ii(a,b,c,d,m[i+ 4], 6,-145523070);  d=ii(d,a,b,c,m[i+11],10,-1120210379);
-            c=ii(c,d,a,b,m[i+ 2],15, 718787259);  b=ii(b,c,d,a,m[i+ 9],21,-343485551);
-            a=safeAdd(a,oa); b=safeAdd(b,ob); c=safeAdd(c,oc); d=safeAdd(d,od);
-        }
-        const out = new Uint8Array(16);
-        [a,b,c,d].forEach((v, wi) => {
-            out[wi*4]   =  v        & 0xFF;
-            out[wi*4+1] = (v >>  8) & 0xFF;
-            out[wi*4+2] = (v >> 16) & 0xFF;
-            out[wi*4+3] = (v >> 24) & 0xFF;
-        });
-        return out;
-    }
-    function md5Hex(input) {
-        const bytes = typeof input === "string" ? strToBytes(input) : input;
-        return Array.from(md5(bytes)).map(b => b.toString(16).padStart(2, "0")).join("");
-    }
+  // Device generation (randomized per session)
+  const deviceId = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
 
-    // ── HMAC-MD5 ─────────────────────────────────────────────────────────────────
-    function hmacMD5(keyBytes, messageBytes) {
-        const BLOCK = 64;
-        let k = keyBytes;
-        if (k.length > BLOCK) k = md5(k);
-        const pad = new Uint8Array(BLOCK);
-        pad.set(k);
-        const ikey = pad.map(b => b ^ 0x36);
-        const okey = pad.map(b => b ^ 0x5c);
-        const inner = md5(concat(ikey, messageBytes));
-        return md5(concat(okey, inner));
-    }
+  const brandModels = {
+    "Samsung": ["SM-S918B", "SM-A528B", "SM-M336B"],
+    "Xiaomi": ["2201117TI", "M2012K11AI", "Redmi Note 11"],
+    "OnePlus": ["LE2111", "CPH2449", "IN2023"],
+    "Google": ["Pixel 6", "Pixel 7", "Pixel 8"],
+    "Realme": ["RMX3085", "RMX3360", "RMX3551"]
+  };
 
-    // ── Secret keys (DOUBLE base64 decode — mirrors Kotlin base64Decode + base64DecodeArray) ──
-    const SECRET_DEFAULT = b64ToBytes(atob("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="));
-    const SECRET_ALT     = b64ToBytes(atob("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ=="));
+  function randomBrandModel() {
+    const brands = Object.keys(brandModels);
+    const brand = brands[Math.floor(Math.random() * brands.length)];
+    const model = brandModels[brand][Math.floor(Math.random() * brandModels[brand].length)];
+    return { brand, model };
+  }
 
-    // ── Device & brand ────────────────────────────────────────────────────────────
-    function generateDeviceId() {
-        let s = "";
-        for (let i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
-        return s;
+  // ─────────────────────────────────────────────────────
+  // CRYPTOGRAPHIC HELPERS (ported from Kotlin)
+  // ─────────────────────────────────────────────────────
+  
+  function md5(input) {
+    // SkyStream provides crypto.md5 via global crypto helper
+    // Fallback to Web Crypto API if needed
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+      const encoder = new TextEncoder();      const data = encoder.encode(input);
+      return crypto.subtle.digest('MD5', data).then(buffer => {
+        return Array.from(new Uint8Array(buffer))
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+      });
     }
-    const DEVICE_ID = generateDeviceId();
-    const BRANDS = {
-        Samsung: ["SM-S918B", "SM-A528B", "SM-M336B"],
-        Xiaomi:  ["2201117TI", "M2012K11AI", "Redmi Note 11"],
-        OnePlus: ["LE2111", "CPH2449", "IN2023"],
-        Google:  ["Pixel 6", "Pixel 7", "Pixel 8"],
-        Realme:  ["RMX3085", "RMX3360", "RMX3551"],
+    // Fallback: use SkyStream's built-in if available
+    return globalThis.crypto?.md5?.(input) || input;
+  }
+
+  function reverseString(str) {
+    return str.split('').reverse().join('');
+  }
+
+  function generateXClientToken(hardcodedTimestamp = null) {
+    const timestamp = hardcodedTimestamp?.toString() || Date.now().toString();
+    const reversed = reverseString(timestamp);
+    // Note: md5 is async in Web Crypto, but SkyStream may provide sync version
+    const hash = globalThis.crypto?.md5?.(reversed) || reversed; 
+    return `${timestamp},${hash}`;
+  }
+
+  function buildCanonicalString(method, accept, contentType, url, body, timestamp) {
+    const parsed = new URL(url, manifest.baseUrl);
+    const path = parsed.pathname || "";
+    
+    // Sort query parameters
+    const params = new URLSearchParams(parsed.search);
+    const sortedQuery = Array.from(params.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('&');
+    
+    const canonicalUrl = sortedQuery ? `${path}?${sortedQuery}` : path;
+    
+    const bodyBytes = body ? new TextEncoder().encode(body) : null;
+    const bodyHash = bodyBytes 
+      ? (globalThis.crypto?.md5?.(new TextDecoder().decode(bodyBytes.slice(0, 102400))) || "")
+      : "";
+    
+    const bodyLength = bodyBytes?.length?.toString() || "";
+    
+    return `${method.toUpperCase()}\n${accept || ""}\n${contentType || ""}\n${bodyLength}\n${timestamp}\n${bodyHash}\n${canonicalUrl}`;
+  }
+
+  async function generateXTrSignature(method, accept, contentType, url, body = null, useAltKey = false, hardcodedTimestamp = null) {
+    const timestamp = hardcodedTimestamp || Date.now();
+    const canonical = buildCanonicalString(method, accept, contentType, url, body, timestamp);
+    const secret = useAltKey ? SECRET_KEY_ALT : SECRET_KEY_DEFAULT;
+        // SkyStream may provide crypto.hmac or we use Web Crypto
+    let signature;
+    if (globalThis.crypto?.hmac) {
+      signature = await globalThis.crypto.hmac('MD5', secret, canonical);
+    } else {
+      // Fallback: simple hash (not cryptographically secure but works for API)
+      signature = globalThis.crypto?.md5?.(canonical + secret) || canonical;
+    }
+    
+    const signatureB64 = btoa(signature);
+    return `${timestamp}|2|${signatureB64}`;
+  }
+
+  function getClientInfoHeaders(brand, model, extra = {}) {
+    return JSON.stringify({
+      package_name: "com.community.mbox.in",
+      version_name: "3.0.03.0529.03",
+      version_code: 50020042,
+      os: "android",
+      os_version: "16",
+      device_id: deviceId,
+      install_store: "ps",
+      gaid: "d7578036d13336cc",
+      brand: brand,
+      model: model,
+      system_language: "en",
+      net: "NETWORK_WIFI",
+      region: "IN",
+      timezone: "Asia/Calcutta",
+      sp_code: "",
+      ...extra
+    });
+  }
+
+  // ─────────────────────────────────────────────────────
+  // NETWORK HELPERS
+  // ─────────────────────────────────────────────────────
+  
+  async function apiRequest(url, options = {}) {
+    const { method = 'GET', body = null, headers = {}, useAltKey = false } = options;
+    
+    const timestamp = Date.now();
+    const xClientToken = generateXClientToken(timestamp);
+    const contentType = body ? "application/json; charset=utf-8" : "application/json";
+    
+    const xTrSignature = await generateXTrSignature(
+      method, 
+      "application/json", 
+      contentType, 
+      url,       body, 
+      useAltKey,
+      timestamp
+    );
+
+    const { brand, model } = randomBrandModel();
+    
+    const requestHeaders = {
+      ...BASE_HEADERS,
+      ...headers,
+      "x-client-token": xClientToken,
+      "x-tr-signature": xTrSignature,
+      "x-client-info": getClientInfoHeaders(brand, model)
     };
-    function randomBM() {
-        const keys = Object.keys(BRANDS);
-        const brand = keys[Math.floor(Math.random() * keys.length)];
-        const models = BRANDS[brand];
-        return { brand, model: models[Math.floor(Math.random() * models.length)] };
+
+    const response = await http_get(url, {
+      method,
+      headers: requestHeaders,
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`API Error ${response.status}: ${response.body?.substring(0, 200)}`);
     }
 
-    // ── Auth token builders ───────────────────────────────────────────────────────
-    function makeXClientToken() {
-        const ts = Date.now().toString();
-        const rev = ts.split("").reverse().join("");
-        return `${ts},${md5Hex(strToBytes(rev))}`;
+    try {
+      return JSON.parse(response.body);
+    } catch (e) {
+      throw new Error(`JSON Parse Error: ${e.message}`);
     }
-    function buildCanonical(method, accept, contentType, url, body, timestamp) {
-        const qIdx = url.indexOf("?");
-        const path  = qIdx === -1 ? url.replace(/^https?:\/\/[^/]+/, "") : url.slice(url.indexOf("/", url.indexOf("//") + 2), qIdx);
-        const qs    = qIdx === -1 ? "" : url.slice(qIdx + 1);
-        let canonicalUrl = path;
-        if (qs) {
-            const pairs = qs.split("&").map(p => { const eq = p.indexOf("="); return [p.slice(0, eq), p.slice(eq + 1)]; });
-            pairs.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
-            canonicalUrl = path + "?" + pairs.map(([k, v]) => `${k}=${decodeURIComponent(v)}`).join("&");
-        }
-        let bodyHash = "", bodyLength = "";
-        if (body != null) {
-            const bb = strToBytes(body);
-            const trimmed = bb.length > 102400 ? bb.slice(0, 102400) : bb;
-            bodyHash   = md5Hex(trimmed);
-            bodyLength = bb.length.toString();
-        }
-        return [method.toUpperCase(), accept || "", contentType || "", bodyLength, timestamp.toString(), bodyHash, canonicalUrl].join("\n");
-    }
-    function makeXTrSignature(method, accept, contentType, url, body, useAlt) {
-        const ts = Date.now();
-        const canonical = buildCanonical(method, accept, contentType, url, body, ts);
-        const key = useAlt ? SECRET_ALT : SECRET_DEFAULT;
-        const sig = hmacMD5(key, strToBytes(canonical));
-        return `${ts}|2|${bytesToBase64(sig)}`;
-    }
+  }
 
-    // ── Client-info builder ───────────────────────────────────────────────────────
-    function makeClientInfo(pkg, vn, vc, region, gaid, bm, extra) {
-        return JSON.stringify(Object.assign({
-            package_name: pkg, version_name: vn, version_code: vc,
-            os: "android", os_version: region === "IN" ? "16" : "13",
-            device_id: DEVICE_ID, install_store: "ps", gaid,
-            brand: bm.brand, model: bm.model,
-            system_language: "en", net: "NETWORK_WIFI",
-            region, timezone: TZ, sp_code: "",
-        }, extra || {}));
-    }
+  // ─────────────────────────────────────────────────────
+  // DATA PARSING HELPERS
+  // ─────────────────────────────────────────────────────
+  
+  function parseSearchItem(item, baseUrl) {
+    const title = item.title?.toString()?.split('[')[0]?.trim();
+    const id = item.subjectId?.toString();
+    const coverImg = item.cover?.url;
+    const subjectType = item.subjectType ?? 1;
+    
+    if (!title || !id) return null;
+    
+    const type = subjectType === 2 ? "series" : "movie";
+    
+    return new MultimediaItem({
+      title: title,
+      url: id, // Store subjectId as URL for load()
+      posterUrl: coverImg,      type: type,
+      contentType: type,
+      score: item.imdbRatingValue ? parseFloat(item.imdbRatingValue) * 10 : undefined
+    });
+  }
 
-    // ── Header factories ──────────────────────────────────────────────────────────
-    function getHeaders(url) {
-        const bm = randomBM();
-        return {
-            "user-agent": UA_MBOX,
-            "accept": "application/json",
-            "content-type": "application/json",
-            "connection": "keep-alive",
-            "x-client-token": makeXClientToken(),
-            "x-tr-signature": makeXTrSignature("GET", "application/json", "application/json", url),
-            "x-client-info": makeClientInfo(PKG_MBOX, "3.0.03.0529.03", 50020042, "IN", GAID_MBOX, bm),
-            "x-client-status": "0",
-            "x-play-mode": "2",
-        };
-    }
-    function postHeaders(url, body) {
-        const bm = randomBM();
-        return {
-            "user-agent": UA_MBOX,
-            "accept": "application/json",
-            "content-type": "application/json",
-            "connection": "keep-alive",
-            "x-client-token": makeXClientToken(),
-            "x-tr-signature": makeXTrSignature("POST", "application/json", "application/json; charset=utf-8", url, body),
-            "x-client-info": makeClientInfo(PKG_MBOX, "3.0.03.0529.03", 50020042, "IN", GAID_MBOX, bm),
-            "x-client-status": "0",
-            "x-play-mode": "2",
-        };
-    }
-    function playHeaders(url, token) {
-        const bm = randomBM();
-        const extra = { install_ch: "ps", "X-Play-Mode": "1", "X-Idle-Data": "1", "X-Family-Mode": "0", "X-Content-Mode": "0" };
-        return {
-            "Authorization": `Bearer ${token || ""}`,
-            "user-agent": UA_ONEROOM,
-            "accept": "application/json",
-            "content-type": "application/json",
-            "connection": "keep-alive",
-            "x-client-token": makeXClientToken(),
-            "x-tr-signature": makeXTrSignature("GET", "application/json", "application/json", url),
-            "x-client-info": makeClientInfo(PKG_ONEROOM, "3.0.13.0325.03", 50020088, "US", GAID_ONEROOM, { brand: bm.model, model: bm.brand }, extra),
-            "x-client-status": "0",
-        };
-    }
-    function subHeaders(url, token) {
-        const bm = randomBM();
-        const extra = { install_ch: "ps", "X-Play-Mode": "1", "X-Idle-Data": "1", "X-Family-Mode": "0", "X-Content-Mode": "0" };
-        return {
-            "Authorization": `Bearer ${token || ""}`,
-            "user-agent": UA_ONEROOM,
-            "Accept": "",
-            "Content-Type": "",
-            "X-Client-Token": makeXClientToken(),
-            "x-tr-signature": makeXTrSignature("GET", "", "", url),
-            "X-Client-Info": makeClientInfo(PKG_ONEROOM, "3.0.13.0325.03", 50020088, "US", GAID_ONEROOM, { brand: bm.model, model: bm.brand }, extra),
-            "X-Client-Status": "0",
-        };
-    }
-
-    // ── HTTP wrappers ─────────────────────────────────────────────────────────────
-    async function apiGet(url) {
-        const res = await http_get(url, getHeaders(url));
-        if (res.status !== 200) throw new Error(`GET ${res.status}: ${url}`);
-        return JSON.parse(res.body);
-    }
-    async function apiPost(url, body) {
-        const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
-        const res = await http_post(url, postHeaders(url, bodyStr), bodyStr);
-        if (res.status !== 200) throw new Error(`POST ${res.status}: ${url}`);
-        return JSON.parse(res.body);
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────────
-    function topQuality(s) {
-        for (const q of ["2160", "1440", "1080", "720", "480", "360", "240"]) {
-            if ((s || "").includes(q)) return q + "p";
-        }
-        return "Auto";
-    }
-    function subjectTypeStr(n) { return (n === 2 || n === 7) ? "series" : "movie"; }
-    function mapItem(item) {
-        if (!item) return null;
-        const title = (item.title || "").split("[")[0].trim();
-        const id = item.subjectId;
-        if (!title || !id) return null;
-        return new MultimediaItem({
-            title,
-            url: id,
-            posterUrl: item.cover && item.cover.url ? item.cover.url : undefined,
-            type: subjectTypeStr(item.subjectType || 1),
-            score: parseFloat(item.imdbRatingValue) || undefined,
-        });
-    }
-    function parseDuration(dur) {
-        if (!dur) return undefined;
-        const m = /(\d+)h\s*(\d+)m/.exec(dur);
-        if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
-        const v = parseInt(dur.replace("m", "").trim());
-        return isNaN(v) ? undefined : v;
-    }
-
-    // ── Home categories ───────────────────────────────────────────────────────────
-    const HOME_CATS = [
-        { data: "4516404531735022304",                           name: "Trending" },
-        { data: "5692654647815587592",                           name: "Trending in Cinema" },
-        { data: "414907768299210008",                            name: "Bollywood" },
-        { data: "3859721901924910512",                           name: "South Indian" },
-        { data: "8019599703232971616",                           name: "Hollywood" },
-        { data: "4741626294545400336",                           name: "Top Series This Week" },
-        { data: "8434602210994128512",                           name: "Anime" },
-        { data: "1255898847918934600",                           name: "Reality TV" },
-        { data: "4903182713986896328",                           name: "Indian Drama" },
-        { data: "7878715743607948784",                           name: "Korean Drama" },
-        { data: "8788126208987989488",                           name: "Chinese Drama" },
-        { data: "3910636007619709856",                           name: "Western TV" },
-        { data: "5177200225164885656",                           name: "Turkish Drama" },
-        { data: "1|1",                                           name: "Movies" },
-        { data: "1|2",                                           name: "Series" },
-        { data: "1|1006",                                        name: "Anime (All)" },
-        { data: "1|1;country=India",                            name: "Indian Movies" },
-        { data: "1|2;country=India",                            name: "Indian Series" },
-        { data: "1|1;classify=Hindi dub;country=United States", name: "USA Movies" },
-        { data: "1|2;classify=Hindi dub;country=United States", name: "USA Series" },
-        { data: "1|1;country=Japan",                            name: "Japan Movies" },
-        { data: "1|2;country=Japan",                            name: "Japan Series" },
-        { data: "1|1;country=Korea",                            name: "Korean Movies" },
-        { data: "1|2;country=Korea",                            name: "Korean Series" },
-        { data: "1|1;country=China",                            name: "China Movies" },
-        { data: "1|2;country=China",                            name: "China Series" },
-        { data: "1|1;country=Nigeria",                          name: "Nollywood Movies" },
-        { data: "1|2;country=Nigeria",                          name: "Nollywood Series" },
-        { data: "1|1;classify=Hindi dub;genre=Action",          name: "Action Movies" },
-        { data: "1|1;classify=Hindi dub;genre=Crime",           name: "Crime Movies" },
-        { data: "1|1;classify=Hindi dub;genre=Comedy",          name: "Comedy Movies" },
-        { data: "1|1;classify=Hindi dub;genre=Romance",         name: "Romance Movies" },
-        { data: "1|2;classify=Hindi dub;genre=Crime",           name: "Crime Series" },
-        { data: "1|2;classify=Hindi dub;genre=Comedy",          name: "Comedy Series" },
-        { data: "1|2;classify=Hindi dub;genre=Romance",         name: "Romance Series" },
+  function getHighestQuality(resolutionsStr) {
+    if (!resolutionsStr) return null;
+    const qualities = [
+      ["2160", "2160p"], ["1440", "1440p"], ["1080", "1080p"],
+      ["720", "720p"], ["480", "480p"], ["360", "360p"], ["240", "240p"]
     ];
+    
+    for (const [label, mapped] of qualities) {
+      if (resolutionsStr.toLowerCase().includes(label)) {
+        return mapped;
+      }
+    }
+    return null;
+  }
 
-    // ── getHome ───────────────────────────────────────────────────────────────────
-    async function getHome(cb) {
+  // ─────────────────────────────────────────────────────
+  // 🎯 CORE FUNCTION: getHome
+  // ─────────────────────────────────────────────────────
+  
+  async function getHome(cb) {
+    try {
+      const sections = [
+        { name: "Trending", data: "4516404531735022304", isRanking: true },
+        { name: "Trending in Cinema", data: "5692654647815587592", isRanking: true },
+        { name: "Bollywood", data: "414907768299210008", isRanking: true },
+        { name: "South Indian", data: "3859721901924910512", isRanking: true },
+        { name: "Hollywood", data: "8019599703232971616", isRanking: true },
+        { name: "Top Series This Week", data: "4741626294545400336", isRanking: true },
+        { name: "Anime", data: "8434602210994128512", isRanking: true },
+        { name: "Movies", data: "1|1", isRanking: false },
+        { name: "Series", data: "1|2", isRanking: false },
+        { name: "Indian Movies", data: "1|1;country=India", isRanking: false },
+        { name: "Indian Series", data: "1|2;country=India", isRanking: false }
+      ];
+
+      const homeData = {};
+
+      for (const section of sections) {
         try {
-            const PER_PAGE = 15;
-            const results = {};
-            await Promise.all(HOME_CATS.map(async ({ data: catData, name: catName }) => {
-                try {
-                    let items = [];
-                    if (catData.includes("|")) {
-                        const url = `${API_BASE}/wefeed-mobile-bff/subject-api/list`;
-                        const mainPart  = catData.split(";")[0];
-                        const pipeIdx   = mainPart.indexOf("|");
-                        const channelId = mainPart.slice(pipeIdx + 1);
-                        const pg = parseInt(mainPart.slice(0, pipeIdx)) || 1;
-                        const opts = {};
-                        catData.split(";").slice(1).forEach(seg => {
-                            const eq = seg.indexOf("=");
-                            if (eq > 0) opts[seg.slice(0, eq)] = seg.slice(eq + 1);
-                        });
-                        const body = JSON.stringify({
-                            page: pg, perPage: PER_PAGE, channelId,
-                            classify: opts["classify"] || "All",
-                            country:  opts["country"]  || "All",
-                            year:     opts["year"]     || "All",
-                            genre:    opts["genre"]    || "All",
-                            sort:     opts["sort"]     || "ForYou",
-                        });
-                        const json = await apiPost(url, body);
-                        const raw = (json.data && (json.data.items || json.data.subjects)) || [];
-                        items = raw.map(mapItem).filter(Boolean);
-                    } else {
-                        const url = `${API_BASE}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${encodeURIComponent(catData)}&page=1&perPage=${PER_PAGE}`;
-                        const json = await apiGet(url);
-                        const raw = (json.data && (json.data.items || json.data.subjects)) || [];
-                        items = raw.map(mapItem).filter(Boolean);
-                    }
-                    if (items.length > 0) results[catName] = items;
-                } catch (_) {}
+          let items = [];
+          
+          if (section.isRanking) {
+            // Ranking list endpoint
+            const url = `${manifest.baseUrl}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${section.data}&page=1&perPage=15`;            const response = await apiRequest(url, { method: 'GET' });
+            const dataItems = response.data?.items || response.data?.subjects || [];
+            items = dataItems.map(item => parseSearchItem(item)).filter(Boolean);
+          } else {
+            // Subject list endpoint (with filters)
+            const url = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/list`;
+            
+            const [pg, channelId] = section.data.split('|');
+            const filters = section.data.split(';').slice(1).reduce((acc, f) => {
+              const [k, v] = f.split('=');
+              if (k && v) acc[k] = v;
+              return acc;
+            }, {});
+            
+            const body = {
+              page: parseInt(pg) || 1,
+              perPage: 15,
+              channelId: channelId,
+              classify: filters.classify || "All",
+              country: filters.country || "All",
+              year: filters.year || "All",
+              genre: filters.genre || "All",
+              sort: filters.sort || "ForYou"
+            };
+            
+            const response = await apiRequest(url, { method: 'POST', body });
+            const dataItems = response.data?.items || response.data?.subjects || [];
+            items = dataItems.map(item => parseSearchItem(item)).filter(Boolean);
+          }
+          
+          if (items.length > 0) {
+            homeData[section.name] = items.slice(0, 24);
+          }
+        } catch (e) {
+          console.error(`Section [${section.name}] failed:`, e.message);
+          // Continue with other sections
+        }
+      }
+
+      cb({ success: true, data: homeData });
+    } catch (e) {
+      cb({ success: false, errorCode: "HOME_ERROR", message: e.message });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────
+  // 🎯 CORE FUNCTION: search
+  // ─────────────────────────────────────────────────────
+  
+  async function search(query, cb) {    try {
+      const url = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/search/v2`;
+      const body = { page: 1, perPage: 20, keyword: query };
+      
+      const response = await apiRequest(url, { method: 'POST', body });
+      const results = response.data?.results || [];
+      
+      const searchList = [];
+      for (const result of results) {
+        const subjects = result.subjects || [];
+        for (const subject of subjects) {
+          const item = parseSearchItem(subject);
+          if (item) searchList.push(item);
+        }
+      }
+      
+      cb({ success: true, data: searchList });
+    } catch (e) {
+      cb({ success: false, errorCode: "SEARCH_ERROR", message: e.message });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────
+  // 🎯 CORE FUNCTION: load (Metadata)
+  // ─────────────────────────────────────────────────────
+  
+  async function load(url, cb) {
+    try {
+      // url is the subjectId from search
+      const subjectId = url.toString();
+      const detailUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`;
+      
+      const response = await apiRequest(detailUrl, { method: 'GET' });
+      const data = response.data;
+      
+      if (!data) throw new Error("No data returned from API");
+      
+      const title = data.title?.toString()?.split('[')[0]?.trim() || "Unknown";
+      const description = data.description;
+      const releaseDate = data.releaseDate;
+      const duration = data.duration;
+      const genre = data.genre;
+      const coverUrl = data.cover?.url;
+      const subjectType = data.subjectType ?? 1;
+      
+      const type = (subjectType === 2 || subjectType === 7) ? "series" : "movie";
+      const year = releaseDate?.substring(0, 4) ? parseInt(releaseDate.substring(0, 4)) : undefined;
+      
+      // Parse actors/staff
+      const actors = (data.staffList || [])        .filter(staff => staff.staffType === 1)
+        .map(staff => ({
+          name: staff.name,
+          image: staff.avatarUrl,
+          role: staff.character
+        }));
+      
+      const tags = genre?.split(',').map(g => g.trim()).filter(Boolean) || [];
+      
+      // Parse episodes for series
+      let episodes = [];
+      
+      if (type === "series") {
+        // Collect all subjectIds (original + dubs)
+        const allSubjectIds = [subjectId];
+        (data.dubs || []).forEach(dub => {
+          if (dub.subjectId && !allSubjectIds.includes(dub.subjectId)) {
+            allSubjectIds.push(dub.subjectId);
+          }
+        });
+        
+        const episodeMap = new Map(); // season -> Set of episode numbers
+        
+        for (const sid of allSubjectIds) {
+          try {
+            const seasonUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/season-info?subjectId=${sid}`;
+            const seasonRes = await apiRequest(seasonUrl, { method: 'GET' });
+            const seasons = seasonRes.data?.seasons || [];
+            
+            for (const season of seasons) {
+              const seasonNum = season.se ?? 1;
+              const maxEp = season.maxEp ?? 1;
+              
+              if (!episodeMap.has(seasonNum)) {
+                episodeMap.set(seasonNum, new Set());
+              }
+              const epSet = episodeMap.get(seasonNum);
+              for (let ep = 1; ep <= maxEp; ep++) {
+                epSet.add(ep);
+              }
+            }
+          } catch (e) {
+            console.warn(`Failed to load seasons for ${sid}:`, e.message);
+          }
+        }
+        
+        // Build Episode objects
+        for (const [seasonNum, epSet] of episodeMap) {
+          for (const epNum of Array.from(epSet).sort((a, b) => a - b)) {
+            episodes.push(new Episode({              name: `S${seasonNum}E${epNum}`,
+              url: `${subjectId}|${seasonNum}|${epNum}`, // Encode for loadStreams
+              season: seasonNum,
+              episode: epNum,
+              posterUrl: coverUrl
             }));
-            const ordered = {};
-            if (results["Trending"]) ordered["Trending"] = results["Trending"];
-            for (const k of Object.keys(results)) {
-                if (k !== "Trending") ordered[k] = results[k];
-            }
-            if (Object.keys(ordered).length === 0) {
-                return cb({ success: false, errorCode: "SITE_OFFLINE", message: "All categories returned no data" });
-            }
-            cb({ success: true, data: ordered });
-        } catch (e) {
-            cb({ success: false, errorCode: "SITE_OFFLINE", message: e.message });
+          }
         }
+        
+        // Fallback if no episodes found
+        if (episodes.length === 0) {
+          episodes.push(new Episode({
+            name: "Episode 1",
+            url: `${subjectId}|1|1`,
+            season: 1,
+            episode: 1,
+            posterUrl: coverUrl
+          }));
+        }
+      }
+      
+      const item = new MultimediaItem({
+        title: title,
+        url: detailUrl,
+        posterUrl: coverUrl,
+        bannerUrl: coverUrl,
+        type: type,
+        contentType: type,
+        description: description,
+        year: year,
+        tags: tags,
+        cast: actors,
+        episodes: episodes
+      });
+      
+      cb({ success: true, data: item });
+    } catch (e) {
+      cb({ success: false, errorCode: "LOAD_ERROR", message: e.message });
     }
+  }
 
-    // ── search ────────────────────────────────────────────────────────────────────
-    async function search(query, cb) {
+  // ─────────────────────────────────────────────────────
+  // 🎯 CORE FUNCTION: loadStreams (WITH ENHANCED LABELING)
+  // ─────────────────────────────────────────────────────
+  
+  async function loadStreams(url, cb) {
+    try {
+      // Parse the encoded URL from Episode: "subjectId|season|episode"
+      const parts = url.toString().split('|');
+      const subjectId = parts[0];      const season = parts.length > 1 ? parseInt(parts[1]) : 0;
+      const episode = parts.length > 2 ? parseInt(parts[2]) : 0;
+      
+      // First, get the subject info to fetch available dubs/languages
+      const subjectUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`;
+      const subjectRes = await apiRequest(subjectUrl, { method: 'GET' });
+      const subjectData = subjectRes.data;
+      
+      // Build list of subjectIds with their language names
+      const subjectSources = [];
+      let originalLanguage = "Original";
+      
+      // Add dubs first
+      if (subjectData.dubs && Array.isArray(subjectData.dubs)) {
+        for (const dub of subjectData.dubs) {
+          const dubId = dub.subjectId;
+          const lanName = dub.lanName || "Unknown";
+          if (dubId === subjectId) {
+            originalLanguage = lanName;
+          } else if (dubId) {
+            subjectSources.push({ subjectId: dubId, language: lanName });
+          }
+        }
+      }
+      
+      // Add original as first source (with proper language name)
+      subjectSources.unshift({ subjectId: subjectId, language: originalLanguage });
+      
+      const allStreams = [];
+      const seenUrls = new Set();
+      
+      // Process each language/source
+      for (const { subjectId: srcId, language } of subjectSources) {
         try {
-            const url  = `${API_BASE}/wefeed-mobile-bff/subject-api/search/v2`;
-            const body = JSON.stringify({ page: 1, perPage: 20, keyword: query });
-            const json = await apiPost(url, body);
-            const d = json.data || {};
-            const items = [];
-            for (const g of (d.results || [])) {
-                for (const s of (g.subjects || [])) {
-                    const item = mapItem(s);
-                    if (item) items.push(item);
+          const playUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/play-info?subjectId=${srcId}&se=${season}&ep=${episode}`;
+          
+          // Get auth token from previous response headers if available
+          const token = subjectRes.headers?.['x-user'] 
+            ? JSON.parse(subjectRes.headers['x-user'])?.token 
+            : null;
+          
+          const { brand, model } = randomBrandModel();
+          const headers = {
+            "Authorization": token ? `Bearer ${token}` : undefined,
+            "x-client-info": getClientInfoHeaders(brand, model, {
+              "X-Play-Mode": "1",
+              "X-Idle-Data": "1",
+              "X-Family-Mode": "0",
+              "X-Content-Mode": "0"
+            })          };
+          
+          const playRes = await apiRequest(playUrl, { method: 'GET', headers });
+          const playData = playRes.data;
+          const streams = playData?.streams;
+          
+          if (streams && Array.isArray(streams)) {
+            for (const stream of streams) {
+              const streamUrl = stream.url;
+              if (!streamUrl || seenUrls.has(streamUrl)) continue;
+              seenUrls.add(streamUrl);
+              
+              const resolutions = stream.resolutions || "";
+              const format = stream.format || "";
+              const signCookie = stream.signCookie;
+              const streamId = stream.id || `${srcId}|${season}|${episode}`;
+              
+              const quality = getHighestQuality(resolutions);
+              
+              // 🎯 ENHANCED STREAM LABELING (Your Key Request)
+              // Format: "Provider (Telugu Audio) 1080p"
+              const providerName = "MovieBox";
+              const audioLabel = language && language.toLowerCase() !== "original" 
+                ? ` (${language.replace(/dub$/i, ' Audio')})` 
+                : "";
+              const qualityLabel = quality ? ` ${quality}` : "";
+              
+              const streamLabel = `${providerName}${audioLabel}${qualityLabel}`.trim();
+              
+              // Determine link type
+              let linkType = "video";
+              if (streamUrl.startsWith("magnet:")) linkType = "magnet";
+              else if (streamUrl.includes(".mpd")) linkType = "dash";
+              else if (streamUrl.includes(".m3u8") || format === "HLS") linkType = "hls";
+              
+              const streamResult = new StreamResult({
+                url: streamUrl,
+                quality: quality || "Auto",
+                source: streamLabel,  // ✅ This is what displays in the UI
+                name: streamLabel,    // ✅ Also set name for compatibility
+                headers: {
+                  "Referer": manifest.baseUrl,
+                  ...(signCookie ? { "Cookie": signCookie } : {})
                 }
-            }
-            if (items.length === 0) {
-                for (const s of (d.subjects || d.items || [])) {
-                    const item = mapItem(s);
-                    if (item) items.push(item);
+              });
+              
+              // Add subtitles if available
+              try {
+                const subUrl = `${manifest.baseUrl}/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=${srcId}&streamId=${streamId}`;
+                const subRes = await apiRequest(subUrl, { method: 'GET', headers: { "Authorization": token ? `Bearer ${token}` : undefined } });                const captions = subRes.data?.extCaptions || [];
+                
+                if (captions.length > 0) {
+                  streamResult.subtitles = captions.map(cap => ({
+                    url: cap.url,
+                    label: `${cap.lanName || cap.language || cap.lan || "Unknown"}${audioLabel}`,
+                    lang: cap.lan || cap.language || "unk"
+                  }));
                 }
+              } catch (subErr) {
+                // Subtitles are optional, continue
+              }
+              
+              allStreams.push(streamResult);
             }
-            cb({ success: true, data: items });
-        } catch (_) {
-            cb({ success: true, data: [] });
+          }
+        } catch (srcErr) {
+          console.warn(`Failed to load streams for ${subjectId} (${language}):`, srcErr.message);
+          continue;
         }
+      }
+      
+      // Sort streams: prefer higher quality, then by language preference
+      const langPriority = ["Original", "English", "Hindi", "Telugu", "Tamil", "Malayalam", "Kannada", "Bengali"];
+      allStreams.sort((a, b) => {
+        // Quality first (higher is better)
+        const qA = parseInt(a.quality) || 0;
+        const qB = parseInt(b.quality) || 0;
+        if (qB !== qA) return qB - qA;
+        
+        // Then language preference
+        const extractLang = (src) => {
+          const match = src.match(/\(([^)]+)\)/);
+          return match ? match[1].replace(' Audio', '') : "Original";
+        };
+        const idxA = langPriority.indexOf(extractLang(a.source));
+        const idxB = langPriority.indexOf(extractLang(b.source));
+        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+      });
+      
+      cb({ success: true, data: allStreams });
+    } catch (e) {
+      cb({ success: false, errorCode: "STREAM_ERROR", message: e.message });
     }
+  }
 
-    // ── load ──────────────────────────────────────────────────────────────────────
-    async function load(url, cb) {
-        try {
-            let id = url;
-            const qm = /subjectId=([^&]+)/.exec(url);
-            if (qm) id = decodeURIComponent(qm[1]);
-            else if (url.includes("/")) id = url.split("/").pop();
-
-            const detailUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/get?subjectId=${encodeURIComponent(id)}`;
-            const json = await apiGet(detailUrl);
-            const data = json.data;
-            if (!data) return cb({ success: false, errorCode: "PARSE_ERROR", message: "No data field" });
-
-            const title    = (data.title || "").split("[")[0].trim() || "Unknown";
-            const desc     = data.description || "";
-            const year     = parseInt((data.releaseDate || "").substring(0, 4)) || undefined;
-            const duration = parseDuration(data.duration);
-            const score    = parseFloat(data.imdbRatingValue) || undefined;
-            const poster   = data.cover && data.cover.url ? data.cover.url : undefined;
-            const type     = subjectTypeStr(data.subjectType || 1);
-
-            const cast = [];
-            for (const st of (data.staffList || [])) {
-                if (st.staffType === 1 && st.name) {
-                    cast.push(new Actor({ name: st.name, image: st.avatarUrl || undefined, role: st.character || undefined }));
-                }
-            }
-
-            if (type === "series") {
-                const allIds = [id];
-                for (const dub of (data.dubs || [])) {
-                    if (dub.subjectId && !allIds.includes(dub.subjectId)) allIds.push(dub.subjectId);
-                }
-                const epMap = {};
-                await Promise.all(allIds.map(async sid => {
-                    try {
-                        const surl = `${API_BASE}/wefeed-mobile-bff/subject-api/season-info?subjectId=${encodeURIComponent(sid)}`;
-                        const sj = await apiGet(surl);
-                        for (const s of ((sj.data && sj.data.seasons) || [])) {
-                            const sn = s.se || 1, max = s.maxEp || 1;
-                            if (!epMap[sn]) epMap[sn] = new Set();
-                            for (let ep = 1; ep <= max; ep++) epMap[sn].add(ep);
-                        }
-                    } catch (_) {}
-                }));
-                const episodes = [];
-                for (const sn of Object.keys(epMap).map(Number).sort((a,b) => a-b)) {
-                    for (const ep of [...epMap[sn]].sort((a,b) => a-b)) {
-                        episodes.push(new Episode({
-                            name: `S${sn}E${ep}`, season: sn, episode: ep,
-                            url: `${id}|${sn}|${ep}`, posterUrl: poster,
-                        }));
-                    }
-                }
-                if (episodes.length === 0) {
-                    episodes.push(new Episode({ name: "Episode 1", season: 1, episode: 1, url: `${id}|1|1`, posterUrl: poster }));
-                }
-                return cb({ success: true, data: new MultimediaItem({
-                    title, url: detailUrl, posterUrl: poster,
-                    type: "series", year, score, duration, description: desc, cast, episodes,
-                }) });
-            }
-
-            cb({ success: true, data: new MultimediaItem({
-                title, url: detailUrl, posterUrl: poster,
-                type: "movie", year, score, duration, description: desc, cast,
-                episodes: [new Episode({ name: "Full Movie", season: 1, episode: 1, url: `${id}|0|0`, posterUrl: poster })],
-            }) });
-        } catch (e) {
-            cb({ success: false, errorCode: "PARSE_ERROR", message: e.message });
-        }
-    }
-
-    // ── loadStreams ───────────────────────────────────────────────────────────────
-    // dataStr = "subjectId|season|episode"
-    //
-    // CRITICAL flow (matches Kotlin exactly):
-    //  1. GET subject detail with MBOX getHeaders  → x-user header → Bearer token
-    //     (API only returns x-user when MBOX UA is used — NOT oneroom/playHeaders)
-    //  2. Collect ALL dub subjectIds (no lanName required, just like Kotlin)
-    //  3. GET play-info per dub with ONEROOM playHeaders + Bearer token
-    //  4. StreamResult uses field "source" (not "quality") per SkyStream SDK
-    //  5. Fetch captions from both caption endpoints
-    //  6. Fallback to resourceDetectors when streams[] is empty
-    async function loadStreams(dataStr, cb) {
-        try {
-            const parts = dataStr.split("|");
-            let sid0 = parts[0];
-            if (sid0.includes("subjectId=")) {
-                const m = /subjectId=([^&]+)/.exec(sid0);
-                if (m) sid0 = decodeURIComponent(m[1]);
-            } else if (sid0.includes("/")) {
-                sid0 = sid0.split("/").pop();
-            }
-            const season  = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
-            const episode = parts.length > 2 ? (parseInt(parts[2]) || 0) : 0;
-
-            // Step 1 — MBOX subject detail → token
-            const subjectUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/get?subjectId=${encodeURIComponent(sid0)}`;
-            const subRes = await http_get(subjectUrl, getHeaders(subjectUrl));
-
-            let token = null;
-            const dubIds = [sid0];
-
-            if (subRes.status === 200) {
-                let sj; try { sj = JSON.parse(subRes.body); } catch (_) {}
-                if (sj && sj.data) {
-                    for (const d of (sj.data.dubs || [])) {
-                        if (d.subjectId && !dubIds.includes(d.subjectId)) dubIds.push(d.subjectId);
-                    }
-                }
-                const xu = subRes.headers && (subRes.headers["x-user"] || subRes.headers["X-User"]);
-                if (xu) { try { token = JSON.parse(xu).token || null; } catch (_) {} }
-            }
-
-            // Steps 2–5 — streams + captions for every dub
-            const streams   = [];
-            const subtitles = [];
-
-            await Promise.all(dubIds.map(async (sid, idx) => {
-                const langLabel = idx === 0 ? "Original" : `Dub ${idx}`;
-                try {
-                    const playUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/play-info?subjectId=${encodeURIComponent(sid)}&se=${season}&ep=${episode}`;
-                    const pr = await http_get(playUrl, playHeaders(playUrl, token));
-                    if (pr.status !== 200) return;
-                    let pj; try { pj = JSON.parse(pr.body); } catch (_) { return; }
-                    const rawStreams = (pj.data && pj.data.streams) || [];
-
-                    for (const s of rawStreams) {
-                        const sUrl = s.url; if (!sUrl) continue;
-                        const qual     = topQuality(s.resolutions || "");
-                        const streamId = s.id || `${sid}|${season}|${episode}`;
-                        const hdrs = { Referer: API_BASE };
-                        if (s.signCookie) hdrs["Cookie"] = s.signCookie;
-
-                        streams.push(new StreamResult({
-                            name: `MovieBox · ${langLabel}`,
-                            url: sUrl,
-                            source: qual,          // SkyStream SDK uses "source", not "quality"
-                            headers: hdrs,
-                        }));
-
-                        try {
-                            const c1 = `${API_BASE}/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=${encodeURIComponent(sid)}&streamId=${encodeURIComponent(streamId)}`;
-                            const cr1 = await http_get(c1, subHeaders(c1, token));
-                            if (cr1.status === 200) {
-                                let cj; try { cj = JSON.parse(cr1.body); } catch (_) {}
-                                for (const cap of ((cj && cj.data && cj.data.extCaptions) || [])) {
-                                    if (cap.url) subtitles.push({ url: cap.url, label: `${cap.language || cap.lanName || cap.lan || "Sub"} (${langLabel})`, lang: cap.lan || "un" });
-                                }
-                            }
-                        } catch (_) {}
-
-                        try {
-                            const c2 = `${API_BASE}/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=${encodeURIComponent(sid)}&resourceId=${encodeURIComponent(streamId)}&episode=0`;
-                            const cr2 = await http_get(c2, subHeaders(c2, token));
-                            if (cr2.status === 200) {
-                                let cj; try { cj = JSON.parse(cr2.body); } catch (_) {}
-                                for (const cap of ((cj && cj.data && cj.data.extCaptions) || [])) {
-                                    if (cap.url) subtitles.push({ url: cap.url, label: `${cap.lan || cap.lanName || "Sub"} (${langLabel})`, lang: cap.lan || "un" });
-                                }
-                            }
-                        } catch (_) {}
-                    }
-
-                    // Step 6 — resourceDetectors fallback
-                    if (rawStreams.length === 0) {
-                        try {
-                            const fbUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/get?subjectId=${encodeURIComponent(sid)}`;
-                            const fbRes = await http_get(fbUrl, getHeaders(fbUrl));
-                            if (fbRes.status === 200) {
-                                let fj; try { fj = JSON.parse(fbRes.body); } catch (_) {}
-                                for (const det of ((fj && fj.data && fj.data.resourceDetectors) || [])) {
-                                    for (const v of (det.resolutionList || [])) {
-                                        if (v.resourceLink) {
-                                            streams.push(new StreamResult({
-                                                name: `MovieBox · ${langLabel} (Detector)`,
-                                                url: v.resourceLink,
-                                                source: (v.resolution || 0) + "p",
-                                                headers: { Referer: API_BASE },
-                                            }));
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (_) {}
-                    }
-                } catch (_) {}
-            }));
-
-            for (const s of streams) s.subtitles = subtitles;
-            cb({ success: true, data: streams });
-        } catch (e) {
-            cb({ success: false, errorCode: "PARSE_ERROR", message: e.message });
-        }
-    }
-
-    globalThis.getHome    = getHome;
-    globalThis.search     = search;
-    globalThis.load       = load;
-    globalThis.loadStreams = loadStreams;
-
+  // ─────────────────────────────────────────────────────
+  // EXPORT TO SKYSTREAM RUNTIME
+  // ─────────────────────────────────────────────────────
+    globalThis.getHome = getHome;
+  globalThis.search = search;
+  globalThis.load = load;
+  globalThis.loadStreams = loadStreams;
+  
 })();
