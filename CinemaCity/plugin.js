@@ -1,7 +1,4 @@
 (function() {
-  /**
-   * @type {import('@skystream/sdk').Manifest}
-   */
   const BASE_URL = () => (typeof manifest !== "undefined" && manifest.baseUrl) ? manifest.baseUrl : "https://cinemacity.cc";
 
   const TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
@@ -408,7 +405,7 @@
     }
   }
 
-  async function loadStreams(data, cb) {
+  async function loadLinks(data, cb) {
     try {
       const payload = safeJsonParse(data) || {};
       const subtitles = Array.isArray(payload.subtitleTracks)
@@ -438,8 +435,11 @@
     }
   }
 
+  const loadStreams = loadLinks;
+
   globalThis.getHome = getHome;
   globalThis.search = search;
   globalThis.load = load;
   globalThis.loadStreams = loadStreams;
+  globalThis.loadLinks = loadLinks;
 })();
