@@ -1,5 +1,5 @@
 (function () {
-  // manifest is injected at runtime
+  // manifest injected at runtime
   const BASE_URL = () =>
     typeof manifest !== "undefined" && manifest.baseUrl
       ? manifest.baseUrl
@@ -16,7 +16,7 @@
     "User-Agent": "Mozilla/5.0",
   };
 
-  // ---------- utils ----------
+  // ---------- small utils ----------
   function safeJsonParse(str) {
     try {
       return JSON.parse(str);
@@ -28,7 +28,8 @@
   function base64Decode(str) {
     if (!str) return "";
     if (typeof atob === "function") return atob(str);
-    if (typeof Buffer !== "undefined") return Buffer.from(str, "base64").toString("utf8");
+    if (typeof Buffer !== "undefined")
+      return Buffer.from(str, "base64").toString("utf8");
     return "";
   }
 
@@ -56,7 +57,7 @@
     return "Auto";
   }
 
-  // ---------- parsing helpers (regex on raw HTML) ----------
+  // ---------- parsing helpers ----------
   function parseHomeCards(html) {
     const items = [];
     const cardRe = /<div class="dar-short_item[^"]*">([\s\S]*?)<\/div>\s*<\/div>?/gi;
@@ -267,7 +268,7 @@
       const url = `${BASE_URL()}/index.php?do=search&subaction=search&search_start=1&full_search=0&story=${encodeURIComponent(
         query
       )}`;
-      const html = await fetchHtml(url);
+    const html = await fetchHtml(url);
       const items = parseHomeCards(html);
       cb({ success: true, data: items });
     } catch (e) {
@@ -349,13 +350,7 @@
       const background = (meta && meta.background) || bgposter || poster;
       const genres = meta && meta.genres ? meta.genres : [];
 
-      let player = parsePlayerJs(html);
-      if (!player || !player.file) {
-        await loginIfNeeded();
-        html = await fetchHtml(url);
-        player = parsePlayerJs(html);
-      }
-
+      let player = parsePlayerJs(html); // no login retry to avoid undefined helpers
       const built = player
         ? parseEpisodesFromPlayer(player, meta, type)
         : { episodes: [], movieData: null };
