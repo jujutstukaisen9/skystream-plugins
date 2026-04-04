@@ -1,25 +1,5 @@
 [
   {
-    "packageName": "dev.phisher.multimovies",
-    "name": "BollyFlix",
-    "version": 1,
-    "baseUrl": "https://bollyflix.frl",
-    "description": "MultiMovies - Bollywood, Hollywood, South Indian Movies and TV Shows",
-    "authors": [
-      "phisher98"
-    ],
-    "languages": [
-      "en",
-      "hi"
-    ],
-    "categories": [
-      "Movie",
-      "TvSeries",
-      "Anime"
-    ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.phisher.multimovies.sky"
-  },
-  {
     "packageName": "dev.skystream.dudefilms",
     "name": "CinemaCity",
     "version": 1,
