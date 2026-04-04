@@ -1,11 +1,6 @@
 (function () {
-    // 
     // MovieBox  –  SkyStream Gen 2 Plugin 
     // Ported from CloudStream Kotlin plugin by NivinCNC / CNCVerse 
-    // 
-    // Concept mapping 
-    //  
-    //────────────────────────────────────────────────────────────
 
     const API_BASE    = "https://api3.aoneroom.com"; 
     const UA_MBOX     = "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)"; 
@@ -43,7 +38,6 @@
         return btoa(s); 
     } 
 
-    // MD5 
     function md5(input) { 
         function safeAdd(x, y) { const l = (x & 0xFFFF) + (y & 0xFFFF); return (((x >> 16) + (y >> 16) + (l >> 16)) << 16) | (l & 0xFFFF); } 
         function rol(n, c) { return (n << c) | (n >>> (32 - c)); } 
@@ -110,7 +104,6 @@
         return Array.from(md5(bytes)).map(b => b.toString(16).padStart(2, "0")).join(""); 
     } 
 
-    // HMAC-MD5 
     function hmacMD5(keyBytes, messageBytes) { 
         const BLOCK = 64; 
         let k = keyBytes; 
@@ -123,11 +116,9 @@
         return md5(concat(okey, inner)); 
     } 
 
-    // Secret keys 
     const SECRET_DEFAULT = b64ToBytes(atob("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==")); 
     const SECRET_ALT     = b64ToBytes(atob("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==")); 
 
-    // Device & brand 
     function generateDeviceId() { 
         let s = ""; 
         for (let i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16); 
@@ -148,7 +139,6 @@
         return { brand, model: models[Math.floor(Math.random() * models.length)] }; 
     } 
 
-    // Auth token builders 
     function makeXClientToken() { 
         const ts = Date.now().toString(); 
         const rev = ts.split("").reverse().join(""); 
@@ -189,7 +179,8 @@
             bodyHash = md5Hex(trimmed); 
             bodyLength = bb.length.toString(); 
         } 
-        return method.toUpperCase() + "\n" + (accept || "") + "\n" + (contentType || "") + "\n" + bodyLength + "\n" + timestamp.toString() + "\n" + bodyHash + "\n" + canonicalUrl; 
+        const NL = String.fromCharCode(10); 
+        return method.toUpperCase() + NL + (accept || "") + NL + (contentType || "") + NL + bodyLength + NL + timestamp.toString() + NL + bodyHash + NL + canonicalUrl; 
     } 
     function makeXTrSignature(method, accept, contentType, url, body, useAlt) { 
         const ts = Date.now(); 
@@ -199,7 +190,6 @@
         return ts + "|2|" + bytesToBase64(sig); 
     } 
 
-    // Client-info builder 
     function makeClientInfo(pkg, vn, vc, region, gaid, bm, extra) { 
         return JSON.stringify(Object.assign({ 
             package_name: pkg, version_name: vn, version_code: vc, 
@@ -211,7 +201,6 @@
         }, extra || {})); 
     } 
 
-    // Header factories 
     function getHeaders(url) { 
         const bm = randomBM(); 
         return { 
@@ -270,7 +259,6 @@
         }; 
     } 
 
-    // HTTP wrappers 
     async function apiGet(url) { 
         const res = await http_get(url, getHeaders(url)); 
         if (res.status !== 200) throw new Error("GET " + res.status + ": " + url); 
@@ -283,7 +271,6 @@
         return JSON.parse(res.body); 
     } 
 
-    // Helpers 
     function topQuality(s) { 
         for (const q of ["2160", "1440", "1080", "720", "480", "360", "240"]) { 
             if ((s || "").includes(q)) return q + "p"; 
@@ -312,7 +299,6 @@
         return isNaN(v) ? undefined : v; 
     } 
 
-    // Home categories 
     const HOME_CATS = [ 
         { data: "4516404531735022304", name: "Trending" }, 
         { data: "5692654647815587592", name: "Trending in Cinema" }, 
@@ -351,7 +337,6 @@
         { data: "1|2;classify=Hindi dub;genre=Romance", name: "Romance Series" }, 
     ]; 
 
-    // getHome (EXACTLY your original untouched code)
     async function getHome(cb) { 
         try { 
             const PER_PAGE = 15; 
@@ -400,7 +385,6 @@
         } 
     } 
 
-    // search
     async function search(query, cb) {
         try {
             const url = API_BASE + "/wefeed-mobile-bff/subject-api/search/v2";
@@ -431,7 +415,6 @@
         }
     }
 
-    // load
     async function load(url, cb) {
         try {
             const id = url.includes("subjectId=") ? url.split("subjectId=")[1].split("&")[0] : url.split("/").pop();
@@ -458,7 +441,6 @@
         }
     }
 
-    // loadStreams with your exact requested labeling
     async function loadStreams(dataStr, cb) {
         try {
             const id = dataStr;
@@ -501,7 +483,6 @@
         }
     }
 
-    // EXPOSE TO SKYSTREAM (fixes com_cncverse_moviebox.getHome not found)
     globalThis.com_cncverse_moviebox = {
         getHome: getHome,
         search: search,
