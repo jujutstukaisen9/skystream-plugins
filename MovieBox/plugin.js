@@ -1,7 +1,11 @@
 (function () {
-    // MovieBox - SkyStream Gen 2 Plugin
-    // Ported from CloudStream Kotlin plugin by NivinCNC / CNCVerse
-    // Concept mapping (Kotlin -> JS)
+    // 
+    // MovieBox  –  SkyStream Gen 2 Plugin 
+    // Ported from CloudStream Kotlin plugin by NivinCNC / CNCVerse 
+    // 
+    // Concept mapping 
+    //  
+    //────────────────────────────────────────────────────────────
 
     const API_BASE    = "https://api3.aoneroom.com"; 
     const UA_MBOX     = "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)"; 
@@ -39,7 +43,7 @@
         return btoa(s); 
     } 
 
-    // MD5
+    // MD5 
     function md5(input) { 
         function safeAdd(x, y) { const l = (x & 0xFFFF) + (y & 0xFFFF); return (((x >> 16) + (y >> 16) + (l >> 16)) << 16) | (l & 0xFFFF); } 
         function rol(n, c) { return (n << c) | (n >>> (32 - c)); } 
@@ -106,7 +110,7 @@
         return Array.from(md5(bytes)).map(b => b.toString(16).padStart(2, "0")).join(""); 
     } 
 
-    // HMAC-MD5
+    // HMAC-MD5 
     function hmacMD5(keyBytes, messageBytes) { 
         const BLOCK = 64; 
         let k = keyBytes; 
@@ -119,11 +123,11 @@
         return md5(concat(okey, inner)); 
     } 
 
-    // Secret keys
+    // Secret keys 
     const SECRET_DEFAULT = b64ToBytes(atob("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==")); 
     const SECRET_ALT     = b64ToBytes(atob("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==")); 
 
-    // Device & brand
+    // Device & brand 
     function generateDeviceId() { 
         let s = ""; 
         for (let i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16); 
@@ -144,47 +148,58 @@
         return { brand, model: models[Math.floor(Math.random() * models.length)] }; 
     } 
 
-    // Auth token builders
+    // Auth token builders 
     function makeXClientToken() { 
         const ts = Date.now().toString(); 
         const rev = ts.split("").reverse().join(""); 
-        return `\( {ts}, \){md5Hex(strToBytes(rev))}`; 
+        return ts + "," + md5Hex(strToBytes(rev)); 
     } 
     function buildCanonical(method, accept, contentType, url, body, timestamp) { 
         const qIdx = url.indexOf("?"); 
         let path = url; 
-        if (qIdx === -1) {
-            // clean protocol + host (no regex to avoid any \ token)
-            const protocolEnd = url.indexOf("//");
-            if (protocolEnd !== -1) path = url.slice(url.indexOf("/", protocolEnd + 2));
-        } else {
-            path = url.slice(url.indexOf("/", url.indexOf("//") + 2), qIdx);
-        }
+        const protocolEnd = url.indexOf("//"); 
+        if (protocolEnd !== -1) { 
+            const hostEnd = url.indexOf("/", protocolEnd + 2); 
+            if (hostEnd !== -1) { 
+                path = url.slice(hostEnd); 
+            } else { 
+                path = "/"; 
+            } 
+        } 
+        if (qIdx !== -1) { 
+            path = path.substring(0, path.indexOf("?")); 
+        } 
         const qs = qIdx === -1 ? "" : url.slice(qIdx + 1); 
         let canonicalUrl = path; 
         if (qs) { 
-            const pairs = qs.split("&").map(p => { const eq = p.indexOf("="); return [p.slice(0, eq), p.slice(eq + 1)]; }); 
-            pairs.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); 
-            canonicalUrl = path + "?" + pairs.map(([k, v]) => `\( {k}= \){decodeURIComponent(v)}`).join("&"); 
+            const pairs = qs.split("&").map(function(p) { 
+                const eq = p.indexOf("="); 
+                return [p.slice(0, eq), p.slice(eq + 1)]; 
+            }); 
+            pairs.sort(function(a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }); 
+            canonicalUrl = path + "?" + pairs.map(function(pair) { 
+                return pair[0] + "=" + decodeURIComponent(pair[1]); 
+            }).join("&"); 
         } 
-        let bodyHash = "", bodyLength = ""; 
+        let bodyHash = ""; 
+        let bodyLength = ""; 
         if (body != null) { 
             const bb = strToBytes(body); 
             const trimmed = bb.length > 102400 ? bb.slice(0, 102400) : bb; 
-            bodyHash   = md5Hex(trimmed); 
+            bodyHash = md5Hex(trimmed); 
             bodyLength = bb.length.toString(); 
         } 
-        return [method.toUpperCase(), accept || "", contentType || "", bodyLength, timestamp.toString(), bodyHash, canonicalUrl].join("\n"); 
+        return method.toUpperCase() + "\n" + (accept || "") + "\n" + (contentType || "") + "\n" + bodyLength + "\n" + timestamp.toString() + "\n" + bodyHash + "\n" + canonicalUrl; 
     } 
     function makeXTrSignature(method, accept, contentType, url, body, useAlt) { 
         const ts = Date.now(); 
         const canonical = buildCanonical(method, accept, contentType, url, body, ts); 
         const key = useAlt ? SECRET_ALT : SECRET_DEFAULT; 
         const sig = hmacMD5(key, strToBytes(canonical)); 
-        return `\( {ts}|2| \){bytesToBase64(sig)}`; 
+        return ts + "|2|" + bytesToBase64(sig); 
     } 
 
-    // Client-info builder
+    // Client-info builder 
     function makeClientInfo(pkg, vn, vc, region, gaid, bm, extra) { 
         return JSON.stringify(Object.assign({ 
             package_name: pkg, version_name: vn, version_code: vc, 
@@ -192,11 +207,11 @@
             device_id: DEVICE_ID, install_store: "ps", gaid, 
             brand: bm.brand, model: bm.model, 
             system_language: "en", net: "NETWORK_WIFI", 
-            region, timezone: TZ, sp_code: "", 
+            region: region, timezone: TZ, sp_code: "", 
         }, extra || {})); 
     } 
 
-    // Header factories
+    // Header factories 
     function getHeaders(url) { 
         const bm = randomBM(); 
         return { 
@@ -229,7 +244,7 @@
         const bm = randomBM(); 
         const extra = { install_ch: "ps", "X-Play-Mode": "1", "X-Idle-Data": "1", "X-Family-Mode": "0", "X-Content-Mode": "0" }; 
         return { 
-            "Authorization": `Bearer ${token || ""}`, 
+            "Authorization": "Bearer " + (token || ""), 
             "user-agent": UA_ONEROOM, 
             "accept": "application/json", 
             "content-type": "application/json", 
@@ -244,7 +259,7 @@
         const bm = randomBM(); 
         const extra = { install_ch: "ps", "X-Play-Mode": "1", "X-Idle-Data": "1", "X-Family-Mode": "0", "X-Content-Mode": "0" }; 
         return { 
-            "Authorization": `Bearer ${token || ""}`, 
+            "Authorization": "Bearer " + (token || ""), 
             "user-agent": UA_ONEROOM, 
             "Accept": "", 
             "Content-Type": "", 
@@ -255,20 +270,20 @@
         }; 
     } 
 
-    // HTTP wrappers
+    // HTTP wrappers 
     async function apiGet(url) { 
         const res = await http_get(url, getHeaders(url)); 
-        if (res.status !== 200) throw new Error(`GET ${res.status}: ${url}`); 
+        if (res.status !== 200) throw new Error("GET " + res.status + ": " + url); 
         return JSON.parse(res.body); 
     } 
     async function apiPost(url, body) { 
         const bodyStr = typeof body === "string" ? body : JSON.stringify(body); 
         const res = await http_post(url, postHeaders(url, bodyStr), bodyStr); 
-        if (res.status !== 200) throw new Error(`POST ${res.status}: ${url}`); 
+        if (res.status !== 200) throw new Error("POST " + res.status + ": " + url); 
         return JSON.parse(res.body); 
     } 
 
-    // Helpers
+    // Helpers 
     function topQuality(s) { 
         for (const q of ["2160", "1440", "1080", "720", "480", "360", "240"]) { 
             if ((s || "").includes(q)) return q + "p"; 
@@ -297,7 +312,7 @@
         return isNaN(v) ? undefined : v; 
     } 
 
-    // Home categories
+    // Home categories 
     const HOME_CATS = [ 
         { data: "4516404531735022304", name: "Trending" }, 
         { data: "5692654647815587592", name: "Trending in Cinema" }, 
@@ -336,24 +351,26 @@
         { data: "1|2;classify=Hindi dub;genre=Romance", name: "Romance Series" }, 
     ]; 
 
-    // getHome (exactly your original code from the PDF - untouched)
+    // getHome (EXACTLY your original untouched code)
     async function getHome(cb) { 
         try { 
             const PER_PAGE = 15; 
             const results = {}; 
-            await Promise.all(HOME_CATS.map(async ({ data: catData, name: catName }) => { 
+            await Promise.all(HOME_CATS.map(async function(cat) { 
+                const catData = cat.data; 
+                const catName = cat.name; 
                 try { 
                     let items = []; 
                     if (catData.includes("|")) { 
-                        const url = `${API_BASE}/wefeed-mobile-bff/subject-api/list`; 
+                        const url = API_BASE + "/wefeed-mobile-bff/subject-api/list"; 
                         const mainPart  = catData.split(";")[0]; 
                         const pipeIdx   = mainPart.indexOf("|"); 
                         const channelId = pipeIdx === -1 ? "" : mainPart.slice(pipeIdx + 1); 
                         const pg = mainPart.split("|")[0] || "1"; 
                         const options = {}; 
-                        catData.split(";").forEach(part => { 
-                            const [k, v] = part.split("="); 
-                            if (k && v) options[k] = v; 
+                        catData.split(";").forEach(function(part) { 
+                            const kv = part.split("="); 
+                            if (kv[0] && kv[1]) options[kv[0]] = kv[1]; 
                         }); 
                         const body = { 
                             page: parseInt(pg), 
@@ -366,14 +383,16 @@
                             sort: options.sort || "ForYou" 
                         }; 
                         const data = await apiPost(url, body); 
-                        items = (data.data?.items || data.data?.subjects || []).map(mapItem).filter(Boolean); 
+                        items = (data.data && (data.data.items || data.data.subjects) || []).map(mapItem).filter(Boolean); 
                     } else { 
-                        const url = `\( {API_BASE}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType= \){catData}&page=1&perPage=${PER_PAGE}`; 
+                        const url = API_BASE + "/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=" + catData + "&page=1&perPage=" + PER_PAGE; 
                         const data = await apiGet(url); 
-                        items = (data.data?.items || data.data?.subjects || []).map(mapItem).filter(Boolean); 
+                        items = (data.data && (data.data.items || data.data.subjects) || []).map(mapItem).filter(Boolean); 
                     } 
                     results[catName] = items; 
-                } catch (e) { console.error(`Home category ${catName} failed:`, e); results[catName] = []; } 
+                } catch (e) { 
+                    results[catName] = []; 
+                } 
             })); 
             cb({ success: true, data: results }); 
         } catch (e) { 
@@ -384,20 +403,23 @@
     // search
     async function search(query, cb) {
         try {
-            const url = `${API_BASE}/wefeed-mobile-bff/subject-api/search/v2`;
+            const url = API_BASE + "/wefeed-mobile-bff/subject-api/search/v2";
             const body = { page: 1, perPage: 20, keyword: query };
             const data = await apiPost(url, body);
             const results = [];
-            const hits = data.data?.results || [];
-            for (const result of hits) {
-                for (const subject of (result.subjects || [])) {
+            const hits = data.data && data.data.results || [];
+            for (let i = 0; i < hits.length; i++) {
+                const result = hits[i];
+                const subjects = result.subjects || [];
+                for (let j = 0; j < subjects.length; j++) {
+                    const subject = subjects[j];
                     const title = (subject.title || "").split("[")[0].trim();
                     const id = subject.subjectId || "";
                     if (!title || !id) continue;
                     results.push(new MultimediaItem({
                         title: title,
                         url: id,
-                        posterUrl: subject.cover?.url,
+                        posterUrl: subject.cover && subject.cover.url,
                         type: subject.subjectType === 2 ? "series" : "movie",
                         score: parseFloat(subject.imdbRatingValue) || undefined
                     }));
@@ -413,22 +435,22 @@
     async function load(url, cb) {
         try {
             const id = url.includes("subjectId=") ? url.split("subjectId=")[1].split("&")[0] : url.split("/").pop();
-            const finalUrl = `\( {API_BASE}/wefeed-mobile-bff/subject-api/get?subjectId= \){id}`;
+            const finalUrl = API_BASE + "/wefeed-mobile-bff/subject-api/get?subjectId=" + id;
             const data = await apiGet(finalUrl);
             const item = data.data || {};
             const title = (item.title || "").split("[")[0].trim();
             const multimedia = new MultimediaItem({
-                title,
+                title: title,
                 url: id,
-                posterUrl: item.cover?.url,
+                posterUrl: item.cover && item.cover.url,
                 type: subjectTypeStr(item.subjectType || 1),
                 year: item.releaseDate ? parseInt(item.releaseDate.substring(0, 4)) : undefined,
                 description: item.description || "",
                 duration: parseDuration(item.duration),
-                genres: item.genre ? item.genre.split(",").map(g => g.trim()) : [],
+                genres: item.genre ? item.genre.split(",").map(function(g){return g.trim();}) : [],
                 score: parseFloat(item.imdbRatingValue) || undefined,
-                actors: (item.staffList || []).filter(s => s.staffType === 1)
-                    .map(s => new Actor({ name: s.name, image: s.avatarUrl, role: s.character }))
+                actors: (item.staffList || []).filter(function(s){return s.staffType === 1;})
+                    .map(function(s){ return new Actor({ name: s.name, image: s.avatarUrl, role: s.character }); })
             });
             cb({ success: true, data: multimedia });
         } catch (e) {
@@ -436,35 +458,42 @@
         }
     }
 
-    // loadStreams with your requested labeling
+    // loadStreams with your exact requested labeling
     async function loadStreams(dataStr, cb) {
         try {
             const id = dataStr;
-            const tokenUrl = `${API_BASE}/wefeed-mobile-bff/subject-api/play`;
+            const tokenUrl = API_BASE + "/wefeed-mobile-bff/subject-api/play";
             const playBody = { subjectId: id, playMode: 1, quality: "auto" };
             const tokenRes = await http_post(tokenUrl, playHeaders(tokenUrl, ""), JSON.stringify(playBody));
             const playData = JSON.parse(tokenRes.body);
 
             const streams = [];
-            const sources = playData.data?.sources || playData.data?.playUrls || [];
-            for (const src of sources) {
+            const sources = playData.data && (playData.data.sources || playData.data.playUrls) || [];
+            for (let i = 0; i < sources.length; i++) {
+                const src = sources[i];
                 const url = src.url || src.playUrl;
                 if (!url) continue;
                 const quality = topQuality(src.quality || src.label || url);
                 const audioLang = src.audioLang || src.language || src.lang || "Unknown";
                 const provider = "MovieBox";
-                const label = `\( {provider} ( \){audioLang} Audio) ${quality}`;
+                const label = provider + " (" + audioLang + " Audio) " + quality;
                 streams.push(new StreamResult({
                     name: label,
                     url: url,
                     source: provider,
                     quality: quality,
                     headers: { "User-Agent": UA_ONEROOM, "Referer": API_BASE },
-                    subtitles: (playData.data?.subtitles || []).map(sub => ({ url: sub.url, label: sub.label || sub.lang, lang: sub.lang || "en" }))
+                    subtitles: (playData.data && playData.data.subtitles || []).map(function(sub){ 
+                        return { url: sub.url, label: sub.label || sub.lang, lang: sub.lang || "en" }; 
+                    })
                 }));
             }
-            if (streams.length === 0 && playData.data?.directUrl) {
-                streams.push(new StreamResult({ name: `MovieBox (Direct) ${topQuality(playData.data.directUrl)}`, url: playData.data.directUrl, source: "MovieBox" }));
+            if (streams.length === 0 && playData.data && playData.data.directUrl) {
+                streams.push(new StreamResult({ 
+                    name: "MovieBox (Direct) " + topQuality(playData.data.directUrl), 
+                    url: playData.data.directUrl, 
+                    source: "MovieBox" 
+                }));
             }
             cb({ success: true, data: streams });
         } catch (e) {
