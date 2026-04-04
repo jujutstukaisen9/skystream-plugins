@@ -18,13 +18,13 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.skystream.dudefilms.sky"
   },
   {
-    "packageName": "dev.dudefilms.skystream",
+    "packageName": "com.dudefilms.skystream",
     "name": "DudeFilms",
     "version": 1,
-    "baseUrl": "https://dudefilms.llc",
-    "description": "Indian Movies and TV Series - Bollywood, Hollywood, South Indian, Web Series",
+    "baseUrl": "https://dudefilms.sarl",
+    "description": "DudeFilms Provider - Bollywood, Hollywood, South Indian, Web Series and more",
     "authors": [
-      "DudeFilms"
+      "DudeFilms Team"
     ],
     "languages": [
       "hi",
@@ -32,9 +32,10 @@
     ],
     "categories": [
       "Movie",
-      "TvSeries"
+      "TvSeries",
+      "Anime"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.dudefilms.skystream.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.dudefilms.skystream.sky"
   },
   {
     "packageName": "movieblast",
