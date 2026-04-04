@@ -1,307 +1,938 @@
 (function() {
-    const BASE_URL = "https://api3.aoneroom.com";
-    const API_VERSION = "3.0.03.0529.03";
-    const APP_PACKAGE = "com.community.mbox.in";
-    const APP_CODE = 50020042;
+    const BASE_URL = manifest.baseUrl || "https://api3.aoneroom.com";
 
-    function md5(str) {
-        function r(a, b) { return (a << b) | (a >>> (32 - b)); }
-        function f(a, b, c, d, e, g, f) { return r((a + ((b & c) | (~b & d) + e + g) | 0), f) + b; }
-        function g(a, b, c, d, e, g, f) { return r((a + ((b & d) | (c & ~d) + e + g) | 0), f) + b; }
-        function h(a, b, c, d, e, g, f) { return r((a + (b ^ c ^ d + e + g) | 0), f) + b; }
-        function i(a, b, c, d, e, g, f) { return r((a + (c ^ (b | ~d) + e + g) | 0), f) + b; }
-        
-        const k = [];
-        for (let i = 0; i < 64; i++) k[i] = 0;
-        let l = 0;
-        for (let i = 0; i < str.length; i++) {
-            const c = str.charCodeAt(i);
-            k[l++] |= c;
+    const SECRET_KEY_DEFAULT = "NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==";
+    const SECRET_KEY_ALT = "WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==";
+
+    const UA = "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)";
+
+    const brandModels = {
+        "Samsung": ["SM-S918B", "SM-A528B", "SM-M336B"],
+        "Xiaomi": ["2201117TI", "M2012K11AI", "Redmi Note 11"],
+        "OnePlus": ["LE2111", "CPH2449", "IN2023"],
+        "Google": ["Pixel 6", "Pixel 7", "Pixel 8"],
+        "Realme": ["RMX3085", "RMX3360", "RMX3551"]
+    };
+
+    let deviceId = null;
+
+    function generateDeviceId() {
+        const hexChars = "0123456789abcdef";
+        let result = "";
+        for (let i = 0; i < 16; i++) {
+            result += hexChars[Math.floor(Math.random() * 16)];
         }
-        k[l] = 128;
+        return result;
+    }
+
+    function randomBrandModel() {
+        const brands = Object.keys(brandModels);
+        const brand = brands[Math.floor(Math.random() * brands.length)];
+        const models = brandModels[brand];
+        const model = models[Math.floor(Math.random() * models.length)];
+        return { brand, model };
+    }
+
+    function md5(data) {
+        if (typeof crypto_md5 === "function") {
+            return crypto_md5(data);
+        }
         
-        const m = str.length * 8;
-        k[56] = (m >>> 24) & 255;
-        k[57] = (m >>> 16) & 255;
-        k[58] = (m >>> 8) & 255;
-        k[59] = m & 255;
-        
-        let a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
-        
-        a = f(a, b, c, d, k[0], 7, 0xd76aa478); d = f(d, a, b, c, k[1], 12, 0xe8c7b756); c = f(c, d, a, b, k[2], 17, 0x242070db); b = f(b, c, d, a, k[3], 22, 0xc1bdceee);
-        a = f(a, b, c, d, k[4], 7, 0xf57c0faf); d = f(d, a, b, c, k[5], 12, 0x4787c62a); c = f(c, d, a, b, k[6], 17, 0xa8304613); b = f(b, c, d, a, k[7], 22, 0xfd469501);
-        a = f(a, b, c, d, k[8], 7, 0x698098d8); d = f(d, a, b, c, k[9], 12, 0x8b44f7af); c = f(c, d, a, b, k[10], 17, 0xffff5bb1); b = f(b, c, d, a, k[11], 22, 0x895cd7be);
-        a = f(a, b, c, d, k[12], 7, 0x6b901122); d = f(d, a, b, c, k[13], 12, 0xfd987193); c = f(c, d, a, b, k[14], 17, 0xa679438e); b = f(b, c, d, a, k[15], 22, 0x49b40821);
-        
-        a = g(a, b, c, d, k[1], 5, 0xf61e2562); d = g(d, a, b, c, k[6], 9, 0xc040b340); c = g(c, d, a, b, k[11], 14, 0x265e5a51); b = g(b, c, d, a, k[0], 20, 0xe9b6c7aa);
-        a = g(a, b, c, d, k[5], 5, 0xd62f105d); d = g(d, a, b, c, k[10], 9, 0x2441453); c = g(c, d, a, b, k[15], 14, 0xd8a1e681); b = g(b, c, d, a, k[4], 20, 0xe7d3fbc8);
-        a = g(a, b, c, d, k[9], 5, 0x21e1cde6); d = g(d, a, b, c, k[14], 9, 0xc33707d6); c = g(c, d, a, b, k[3], 14, 0xf4d50d87); b = g(b, c, d, a, k[8], 20, 0x455a14ed);
-        a = g(a, b, c, d, k[13], 5, 0xa9e3e905); d = g(d, a, b, c, k[2], 9, 0xfcefa3f8); c = g(c, d, a, b, k[7], 14, 0x676f02d9); b = g(b, c, d, a, k[12], 20, 0x8d2a4c8a);
-        
-        a = h(a, b, c, d, k[5], 4, 0xfffa3942); d = h(d, a, b, c, k[8], 11, 0x8771f681); c = h(c, d, a, b, k[11], 16, 0x6d9d6122); b = h(b, c, d, a, k[14], 23, 0xfde5380c);
-        a = h(a, b, c, d, k[1], 4, 0xa4bea44); d = h(d, a, b, c, k[4], 11, 0x4bdeca9); c = h(c, d, a, b, k[7], 16, 0xf6bb4b60); b = h(b, c, d, a, k[10], 23, 0xbebfbc70);
-        a = h(a, b, c, d, k[13], 4, 0x289b7ec6); d = h(d, a, b, c, k[0], 11, 0xeaa127fa); c = h(c, d, a, b, k[3], 16, 0xd4ef3085); b = h(b, c, d, a, k[6], 23, 0x4881d05);
-        a = h(a, b, c, d, k[9], 4, 0xd9d4d039); d = h(d, a, b, c, k[12], 11, 0xe6db99e5); c = h(c, d, a, b, k[15], 16, 0x1fa27cf8); b = h(b, c, d, a, k[2], 23, 0xc4ac5665);
-        
-        a = i(a, b, c, d, k[0], 6, 0xf4292244); d = i(d, a, b, c, k[7], 10, 0x432aff97); c = i(c, d, a, b, k[14], 15, 0xab9423a7); b = i(b, c, d, a, k[5], 21, 0xfc93a039);
-        a = i(a, b, c, d, k[12], 6, 0x655b59c3); d = i(d, a, b, c, k[3], 10, 0x8f0ccc92); c = i(c, d, a, b, k[10], 15, 0xffeff47d); b = i(b, c, d, a, k[1], 21, 0x85845dd1);
-        a = i(a, b, c, d, k[8], 6, 0x6fa87e4f); d = i(d, a, b, c, k[15], 10, 0xfe2ce6e0); c = i(c, d, a, b, k[6], 15, 0xa3014314); b = i(b, c, d, a, k[13], 21, 0x4e0811a1);
-        a = i(a, b, c, d, k[4], 6, 0xf7537e82); d = i(d, a, b, c, k[11], 10, 0xbd3af235); c = i(c, d, a, b, k[2], 15, 0x2ad7d2bb); b = i(b, c, d, a, k[9], 21, 0xeb86d391);
-        
-        a = (a + 0x67452301) & 0xffffffff;
-        b = (b + 0xefcdab89) & 0xffffffff;
-        c = (c + 0x98badcfe) & 0xffffffff;
-        d = (d + 0x10325476) & 0xffffffff;
-        
-        const hex = (n) => {
-            let s = "";
-            for (let i = 0; i < 4; i++) s = ((n >> (i * 8)) & 255).toString(16).padStart(2, '0') + s;
-            return s;
+        function safeAdd(x, y) {
+            const lsw = (x & 0xFFFF) + (y & 0xFFFF);
+            const msw = (x >> 16) + (y >> 16) + (lsw >> 16);
+            return (msw << 16) | (lsw & 0xFFFF);
+        }
+
+        function bitRotateLeft(num, cnt) {
+            return (num << cnt) | (num >>> (32 - cnt));
+        }
+
+        function md5cmn(q, a, b, x, s, t) {
+            return safeAdd(bitRotateLeft(safeAdd(safeAdd(a, q), safeAdd(x, t)), s), b);
+        }
+
+        function md5ff(a, b, c, d, x, s, t) {
+            return md5cmn((b & c) | (~b & d), a, b, x, s, t);
+        }
+
+        function md5gg(a, b, c, d, x, s, t) {
+            return md5cmn((b & d) | (c & ~d), a, b, x, s, t);
+        }
+
+        function md5hh(a, b, c, d, x, s, t) {
+            return md5cmn(b ^ c ^ d, a, b, x, s, t);
+        }
+
+        function md5ii(a, b, c, d, x, s, t) {
+            return md5cmn(c ^ (b | ~d), a, b, x, s, t);
+        }
+
+        const binlMD5 = function(x, len) {
+            x[len >> 5] |= 0x80 << (len % 32);
+            x[(((len + 64) >>> 9) << 4) + 14] = len;
+
+            let a = 1732584193;
+            let b = -271733879;
+            let c = -1732584194;
+            let d = 271733878;
+
+            for (let i = 0; i < x.length; i += 16) {
+                const olda = a;
+                const oldb = b;
+                const oldc = c;
+                const oldd = d;
+
+                a = md5ff(a, b, c, d, x[i], 7, -680876936);
+                d = md5ff(d, a, b, c, x[i + 1], 12, -389564586);
+                c = md5ff(c, d, a, b, x[i + 2], 17, 606105819);
+                b = md5ff(b, c, d, a, x[i + 3], 22, -1044525330);
+                a = md5ff(a, b, c, d, x[i + 4], 7, -176418897);
+                d = md5ff(d, a, b, c, x[i + 5], 12, 1200080426);
+                c = md5ff(c, d, a, b, x[i + 6], 17, -1473231341);
+                b = md5ff(b, c, d, a, x[i + 7], 22, -45705983);
+                a = md5ff(a, b, c, d, x[i + 8], 7, 1770035416);
+                d = md5ff(d, a, b, c, x[i + 9], 12, -1958414417);
+                c = md5ff(c, d, a, b, x[i + 10], 17, -42063);
+                b = md5ff(b, c, d, a, x[i + 11], 22, -1990404162);
+                a = md5ff(a, b, c, d, x[i + 12], 7, 1804603682);
+                d = md5ff(d, a, b, c, x[i + 13], 12, -40341101);
+                c = md5ff(c, d, a, b, x[i + 14], 17, -1502002290);
+                b = md5ff(b, c, d, a, x[i + 15], 22, 1236535329);
+
+                a = md5gg(a, b, c, d, x[i + 1], 5, -165796510);
+                d = md5gg(d, a, b, c, x[i + 6], 9, -1069501632);
+                c = md5gg(c, d, a, b, x[i + 11], 14, 643717713);
+                b = md5gg(b, c, d, a, x[i], 20, -373897302);
+                a = md5gg(a, b, c, d, x[i + 5], 5, -701558691);
+                d = md5gg(d, a, b, c, x[i + 10], 9, 38016083);
+                c = md5gg(c, d, a, b, x[i + 15], 14, -660478335);
+                b = md5gg(b, c, d, a, x[i + 4], 20, -405537848);
+                a = md5gg(a, b, c, d, x[i + 9], 5, 568446438);
+                d = md5gg(d, a, b, c, x[i + 14], 9, -1019803690);
+                c = md5gg(c, d, a, b, x[i + 3], 14, -187363961);
+                b = md5gg(b, c, d, a, x[i + 8], 20, 1163531501);
+                a = md5gg(a, b, c, d, x[i + 13], 5, -1444681467);
+                d = md5gg(d, a, b, c, x[i + 2], 9, -51403784);
+                c = md5gg(c, d, a, b, x[i + 7], 14, 1735328473);
+                b = md5gg(b, c, d, a, x[i + 12], 20, -1926607734);
+
+                a = md5hh(a, b, c, d, x[i + 5], 4, -378558);
+                d = md5hh(d, a, b, c, x[i + 8], 11, -2022574463);
+                c = md5hh(c, d, a, b, x[i + 11], 16, 1839030562);
+                b = md5hh(b, c, d, a, x[i + 14], 23, -35309556);
+                a = md5hh(a, b, c, d, x[i + 1], 4, -1530992060);
+                d = md5hh(d, a, b, c, x[i + 4], 11, 1272893353);
+                c = md5hh(c, d, a, b, x[i + 7], 16, -155497632);
+                b = md5hh(b, c, d, a, x[i + 10], 23, -1094730640);
+                a = md5hh(a, b, c, d, x[i + 13], 4, 681279174);
+                d = md5hh(d, a, b, c, x[i], 11, -358537222);
+                c = md5hh(c, d, a, b, x[i + 3], 16, -722521979);
+                b = md5hh(b, c, d, a, x[i + 6], 23, 76029189);
+                a = md5hh(a, b, c, d, x[i + 9], 4, -640364487);
+                d = md5hh(d, a, b, c, x[i + 12], 11, -421815835);
+                c = md5hh(c, d, a, b, x[i + 15], 16, 530742520);
+                b = md5hh(b, c, d, a, x[i + 2], 23, -995338651);
+
+                a = md5ii(a, b, c, d, x[i], 6, -198630844);
+                d = md5ii(d, a, b, c, x[i + 7], 10, 1126891415);
+                c = md5ii(c, d, a, b, x[i + 14], 15, -1416354905);
+                b = md5ii(b, c, d, a, x[i + 5], 21, -57434055);
+                a = md5ii(a, b, c, d, x[i + 12], 6, 1700485571);
+                d = md5ii(d, a, b, c, x[i + 3], 10, -1894986606);
+                c = md5ii(c, d, a, b, x[i + 10], 15, -1051523);
+                b = md5ii(b, c, d, a, x[i + 1], 21, -2054922799);
+                a = md5ii(a, b, c, d, x[i + 8], 6, 1873313359);
+                d = md5ii(d, a, b, c, x[i + 15], 10, -30611744);
+                c = md5ii(c, d, a, b, x[i + 6], 15, -1560198380);
+                b = md5ii(b, c, d, a, x[i + 13], 21, 1309151649);
+                a = md5ii(a, b, c, d, x[i + 4], 6, -145523070);
+                d = md5ii(d, a, b, c, x[i + 11], 10, -1120210379);
+                c = md5ii(c, d, a, b, x[i + 2], 15, 718787259);
+                b = md5ii(b, c, d, a, x[i + 9], 21, -343485551);
+
+                a = safeAdd(a, olda);
+                b = safeAdd(b, oldb);
+                c = safeAdd(c, oldc);
+                d = safeAdd(d, oldd);
+            }
+            return [a, b, c, d];
         };
-        return hex(a) + hex(b) + hex(c) + hex(d);
+
+        function binl2hex(binarray) {
+            const hexTab = "0123456789abcdef";
+            let str = "";
+            for (let i = 0; i < binarray.length * 4; i++) {
+                str += hexTab.charAt((binarray[i >> 2] >> ((i % 4) * 8 + 4)) & 0xF) +
+                    hexTab.charAt((binarray[i >> 2] >> ((i % 4) * 8)) & 0xF);
+            }
+            return str;
+        }
+
+        function str2binl(str) {
+            const bin = [];
+            for (let i = 0; i < str.length * 8; i += 8) {
+                bin[i >> 5] |= (str.charCodeAt(i / 8) & 0xFF) << (i % 32);
+            }
+            return bin;
+        }
+
+        return binl2hex(binlMD5(str2binl(data), data.length * 8));
     }
 
-    function getDeviceId() {
-        const hex = "0123456789abcdef";
-        let id = "";
-        for (let i = 0; i < 32; i++) id += hex[Math.floor(Math.random() * 16)];
-        return id;
+    function reverseString(input) {
+        return input.split("").reverse().join("");
     }
 
-    const deviceId = getDeviceId();
-
-    const deviceModels = [
-        { brand: "Samsung", model: "SM-S918B" },
-        { brand: "Xiaomi", model: "Redmi Note 11" },
-        { brand: "OnePlus", model: "LE2111" },
-        { brand: "Google", model: "Pixel 7" },
-        { brand: "Realme", model: "RMX3085" }
-    ];
-
-    function getRandomDevice() {
-        return deviceModels[Math.floor(Math.random() * deviceModels.length)];
+    function generateXClientToken(hardcodedTimestamp = null) {
+        const timestamp = (hardcodedTimestamp || Date.now()).toString();
+        const reversed = reverseString(timestamp);
+        const hash = md5(reversed);
+        return `${timestamp},${hash}`;
     }
 
-    function generateToken() {
-        const ts = Date.now();
-        const rev = String(ts).split("").reverse().join("");
-        const hash = md5(rev);
-        return `${ts},${hash}`;
-    }
-
-    function generateSignature(method, url, body) {
-        const ts = Date.now();
-        let path = "/", query = "";
+    function base64Decode(str) {
         try {
-            const u = new URL(url);
-            path = u.pathname;
-            if (u.search) query = u.search.substring(1).split("&").sort().join("&");
-        } catch {}
-        const finalPath = query ? `${path}?${query}` : path;
-        
-        let bodyHash = "", bodyLen = "";
-        if (body) {
-            bodyHash = md5(body.substring(0, 50000));
-            bodyLen = body.length.toString();
+            return atob(str);
+        } catch (e) {
+            return "";
         }
-        
-        const canonical = [
-            method.toUpperCase(),
-            "application/json",
-            "application/json",
-            bodyLen,
-            ts.toString(),
-            bodyHash,
-            finalPath
-        ].join("\n");
-        
-        const key = base64Decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==");
-        const ipad = [], opad = [];
-        for (let i = 0; i < 64; i++) {
-            ipad.push((key[i] || 0) ^ 0x36);
-            opad.push((key[i] || 0) ^ 0x5c);
-        }
-        
-        const innerHash = md5(String.fromCharCode(...ipad) + canonical);
-        const sig = md5(String.fromCharCode(...opad) + innerHash);
-        
-        const bytes = [];
-        for (let i = 0; i < 32; i += 2) bytes.push(parseInt(sig.substr(i, 2), 16));
-        
-        return `${ts}|2|${btoa(String.fromCharCode(...bytes))}`;
     }
 
-    function buildHeaders(apiUrl, body) {
-        const device = getRandomDevice();
+    function buildCanonicalString(method, accept, contentType, url, body, timestamp) {
+        try {
+            const parsedUrl = new URL(url);
+            const path = parsedUrl.pathname;
+            
+            let query = "";
+            if (parsedUrl.searchParams && parsedUrl.searchParams.toString()) {
+                const keys = Array.from(parsedUrl.searchParams.keys()).sort();
+                query = keys.map(key => {
+                    return parsedUrl.searchParams.getAll(key).map(value => `${key}=${value}`).join("&");
+                }).join("&");
+            }
+            
+            const canonicalUrl = query ? `${path}?${query}` : path;
+
+            let bodyHash = "";
+            if (body) {
+                const bodyBytes = body.slice(0, 102400);
+                bodyHash = md5(bodyBytes);
+            }
+
+            const bodyLength = body ? body.length.toString() : "";
+
+            return `${method.toUpperCase()}\n${accept || ""}\n${contentType || ""}\n${bodyLength}\n${timestamp}\n${bodyHash}\n${canonicalUrl}`;
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function hmacMd5(secret, message) {
+        if (typeof crypto_hmac_md5 === "function") {
+            return crypto_hmac_md5(secret, message);
+        }
+        
+        function str2binl(str) {
+            const bin = [];
+            for (let i = 0; i < str.length * 8; i += 8) {
+                bin[i >> 5] |= (str.charCodeAt(i / 8) & 0xFF) << (i % 32);
+            }
+            return bin;
+        }
+
+        function binl2hex(binarray) {
+            const hexTab = "0123456789abcdef";
+            let str = "";
+            for (let i = 0; i < binarray.length * 4; i++) {
+                str += hexTab.charAt((binarray[i >> 2] >> ((i % 4) * 8 + 4)) & 0xF) +
+                    hexTab.charAt((binarray[i >> 2] >> ((i % 4) * 8)) & 0xF);
+            }
+            return str;
+        }
+
+        function safeAdd(x, y) {
+            const lsw = (x & 0xFFFF) + (y & 0xFFFF);
+            const msw = (x >> 16) + (y >> 16) + (lsw >> 16);
+            return (msw << 16) | (lsw & 0xFFFF);
+        }
+
+        function bitRotateLeft(num, cnt) {
+            return (num << cnt) | (num >>> (32 - cnt));
+        }
+
+        function md5cmn(q, a, b, x, s, t) {
+            return safeAdd(bitRotateLeft(safeAdd(safeAdd(a, q), safeAdd(x, t)), s), b);
+        }
+
+        function md5ff(a, b, c, d, x, s, t) {
+            return md5cmn((b & c) | (~b & d), a, b, x, s, t);
+        }
+
+        function md5gg(a, b, c, d, x, s, t) {
+            return md5cmn((b & d) | (c & ~d), a, b, x, s, t);
+        }
+
+        function md5hh(a, b, c, d, x, s, t) {
+            return md5cmn(b ^ c ^ d, a, b, x, s, t);
+        }
+
+        function md5ii(a, b, c, d, x, s, t) {
+            return md5cmn(c ^ (b | ~d), a, b, x, s, t);
+        }
+
+        function binlMD5(x, len) {
+            x[len >> 5] |= 0x80 << (len % 32);
+            x[(((len + 64) >>> 9) << 4) + 14] = len;
+
+            let a = 1732584193;
+            let b = -271733879;
+            let c = -1732584194;
+            let d = 271733878;
+
+            for (let i = 0; i < x.length; i += 16) {
+                const olda = a;
+                const oldb = b;
+                const oldc = c;
+                const oldd = d;
+
+                a = md5ff(a, b, c, d, x[i], 7, -680876936);
+                d = md5ff(d, a, b, c, x[i + 1], 12, -389564586);
+                c = md5ff(c, d, a, b, x[i + 2], 17, 606105819);
+                b = md5ff(b, c, d, a, x[i + 3], 22, -1044525330);
+                a = md5ff(a, b, c, d, x[i + 4], 7, -176418897);
+                d = md5ff(d, a, b, c, x[i + 5], 12, 1200080426);
+                c = md5ff(c, d, a, b, x[i + 6], 17, -1473231341);
+                b = md5ff(b, c, d, a, x[i + 7], 22, -45705983);
+                a = md5ff(a, b, c, d, x[i + 8], 7, 1770035416);
+                d = md5ff(d, a, b, c, x[i + 9], 12, -1958414417);
+                c = md5ff(c, d, a, b, x[i + 10], 17, -42063);
+                b = md5ff(b, c, d, a, x[i + 11], 22, -1990404162);
+                a = md5ff(a, b, c, d, x[i + 12], 7, 1804603682);
+                d = md5ff(d, a, b, c, x[i + 13], 12, -40341101);
+                c = md5ff(c, d, a, b, x[i + 14], 17, -1502002290);
+                b = md5ff(b, c, d, a, x[i + 15], 22, 1236535329);
+
+                a = md5gg(a, b, c, d, x[i + 1], 5, -165796510);
+                d = md5gg(d, a, b, c, x[i + 6], 9, -1069501632);
+                c = md5gg(c, d, a, b, x[i + 11], 14, 643717713);
+                b = md5gg(b, c, d, a, x[i], 20, -373897302);
+                a = md5gg(a, b, c, d, x[i + 5], 5, -701558691);
+                d = md5gg(d, a, b, c, x[i + 10], 9, 38016083);
+                c = md5gg(c, d, a, b, x[i + 15], 14, -660478335);
+                b = md5gg(b, c, d, a, x[i + 4], 20, -405537848);
+                a = md5gg(a, b, c, d, x[i + 9], 5, 568446438);
+                d = md5gg(d, a, b, c, x[i + 14], 9, -1019803690);
+                c = md5gg(c, d, a, b, x[i + 3], 14, -187363961);
+                b = md5gg(b, c, d, a, x[i + 8], 20, 1163531501);
+                a = md5gg(a, b, c, d, x[i + 13], 5, -1444681467);
+                d = md5gg(d, a, b, c, x[i + 2], 9, -51403784);
+                c = md5gg(c, d, a, b, x[i + 7], 14, 1735328473);
+                b = md5gg(b, c, d, a, x[i + 12], 20, -1926607734);
+
+                a = md5hh(a, b, c, d, x[i + 5], 4, -378558);
+                d = md5hh(d, a, b, c, x[i + 8], 11, -2022574463);
+                c = md5hh(c, d, a, b, x[i + 11], 16, 1839030562);
+                b = md5hh(b, c, d, a, x[i + 14], 23, -35309556);
+                a = md5hh(a, b, c, d, x[i + 1], 4, -1530992060);
+                d = md5hh(d, a, b, c, x[i + 4], 11, 1272893353);
+                c = md5hh(c, d, a, b, x[i + 7], 16, -155497632);
+                b = md5hh(b, c, d, a, x[i + 10], 23, -1094730640);
+                a = md5hh(a, b, c, d, x[i + 13], 4, 681279174);
+                d = md5hh(d, a, b, c, x[i], 11, -358537222);
+                c = md5hh(c, d, a, b, x[i + 3], 16, -722521979);
+                b = md5hh(b, c, d, a, x[i + 6], 23, 76029189);
+                a = md5hh(a, b, c, d, x[i + 9], 4, -640364487);
+                d = md5hh(d, a, b, c, x[i + 12], 11, -421815835);
+                c = md5hh(c, d, a, b, x[i + 15], 16, 530742520);
+                b = md5hh(b, c, d, a, x[i + 2], 23, -995338651);
+
+                a = md5ii(a, b, c, d, x[i], 6, -198630844);
+                d = md5ii(d, a, b, c, x[i + 7], 10, 1126891415);
+                c = md5ii(c, d, a, b, x[i + 14], 15, -1416354905);
+                b = md5ii(b, c, d, a, x[i + 5], 21, -57434055);
+                a = md5ii(a, b, c, d, x[i + 12], 6, 1700485571);
+                d = md5ii(d, a, b, c, x[i + 3], 10, -1894986606);
+                c = md5ii(c, d, a, b, x[i + 10], 15, -1051523);
+                b = md5ii(b, c, d, a, x[i + 1], 21, -2054922799);
+                a = md5ii(a, b, c, d, x[i + 8], 6, 1873313359);
+                d = md5ii(d, a, b, c, x[i + 15], 10, -30611744);
+                c = md5ii(c, d, a, b, x[i + 6], 15, -1560198380);
+                b = md5ii(b, c, d, a, x[i + 13], 21, 1309151649);
+                a = md5ii(a, b, c, d, x[i + 4], 6, -145523070);
+                d = md5ii(d, a, b, c, x[i + 11], 10, -1120210379);
+                c = md5ii(c, d, a, b, x[i + 2], 15, 718787259);
+                b = md5ii(b, c, d, a, x[i + 9], 21, -343485551);
+
+                a = safeAdd(a, olda);
+                b = safeAdd(b, oldb);
+                c = safeAdd(c, oldc);
+                d = safeAdd(d, oldd);
+            }
+            return [a, b, c, d];
+        }
+
+        function hmac(key, data) {
+            if (typeof key === 'string') {
+                key = str2binl(key);
+            }
+            if (key.length < 16) {
+                const newKey = new Array(16);
+                for (let i = 0; i < 16; i++) {
+                    newKey[i] = key[i] || 0;
+                }
+                key = newKey;
+            }
+
+            const oKeyPad = new Array(16);
+            const iKeyPad = new Array(16);
+            for (let i = 0; i < 16; i++) {
+                oKeyPad[i] = key[i] ^ 0x5c5c5c5c;
+                iKeyPad[i] = key[i] ^ 0x36363636;
+            }
+
+            const iHash = binlMD5(iKeyPad.concat(str2binl(data)), 512 + data.length * 8);
+            return binl2hex(binlMD5(oKeyPad.concat(iHash), 512 + 128));
+        }
+
+        return hmac(secret, message);
+    }
+
+    function generateXTrSignature(method, accept, contentType, url, body = null, useAltKey = false, hardcodedTimestamp = null) {
+        const timestamp = hardcodedTimestamp || Date.now();
+        const canonical = buildCanonicalString(method, accept, contentType, url, body, timestamp);
+        const secret = useAltKey ? base64Decode(SECRET_KEY_ALT) : base64Decode(SECRET_KEY_DEFAULT);
+        const signature = hmacMd5(secret, canonical);
+        const signatureB64 = btoa(signature);
+        return `${timestamp}|2|${signatureB64}`;
+    }
+
+    function getClientInfo(model = null) {
+        if (!deviceId) deviceId = generateDeviceId();
+        const bm = model || randomBrandModel();
+        return JSON.stringify({
+            package_name: "com.community.mbox.in",
+            version_name: "3.0.03.0529.03",
+            version_code: 50020042,
+            os: "android",
+            os_version: "16",
+            device_id: deviceId,
+            install_store: "ps",
+            gaid: "d7578036d13336cc",
+            brand: "google",
+            model: bm.model,
+            system_language: "en",
+            net: "NETWORK_WIFI",
+            region: "IN",
+            timezone: "Asia/Calcutta",
+            sp_code: ""
+        });
+    }
+
+    function getHeaders(url, method = "GET", body = null, contentType = "application/json") {
+        const xClientToken = generateXClientToken();
+        const isPost = method === "POST";
+        const accept = isPost ? "application/json" : "application/json";
+        const fullContentType = isPost ? "application/json; charset=utf-8" : contentType;
+        
+        const xTrSignature = generateXTrSignature(
+            method,
+            accept,
+            fullContentType,
+            url,
+            body,
+            false
+        );
+
         return {
-            "user-agent": "okhttp/4.12.0",
-            "accept": "application/json",
-            "content-type": "application/json; charset=UTF-8",
-            "x-client-token": generateToken(),
-            "x-tr-signature": generateSignature(body ? "POST" : "GET", apiUrl, body),
-            "x-client-info": JSON.stringify({
-                package_name: APP_PACKAGE,
-                version_name: API_VERSION,
-                version_code: APP_CODE,
-                os: "android",
-                os_version: "13",
-                device_id: deviceId,
-                install_store: "ps",
-                gaid: "",
-                brand: device.brand,
-                model: device.model,
-                system_language: "en",
-                net: "NETWORK_WIFI",
-                region: "IN",
-                timezone: "Asia/Kolkata",
-                sp_code: ""
-            }),
+            "user-agent": UA,
+            "accept": accept,
+            "content-type": fullContentType,
+            "connection": "keep-alive",
+            "x-client-token": xClientToken,
+            "x-tr-signature": xTrSignature,
+            "x-client-info": getClientInfo(),
             "x-client-status": "0"
         };
     }
 
-    const homeCategories = [
-        { id: "4516404531735022304", name: "Trending" },
-        { id: "414907768299210008", name: "Bollywood" },
-        { id: "3859721901924910512", name: "South Indian" },
-        { id: "8019599703232971616", name: "Hollywood" },
-        { id: "4741626294545400336", name: "Top Series" },
-        { id: "1|1", name: "Movies" },
-        { id: "1|2", name: "Series" }
-    ];
+    async function fetchApi(url, method = "GET", body = null) {
+        const headers = getHeaders(url, method, body);
+        
+        const options = {
+            headers,
+            method
+        };
+
+        if (body && method === "POST") {
+            options.body = body;
+        }
+
+        const response = await fetch(url, options);
+        return response.json();
+    }
+
+    function parseDuration(duration) {
+        if (!duration) return null;
+        const match = duration.match(/(\d+)h\s*(\d+)m/);
+        if (match) {
+            const hours = parseInt(match[1], 10) || 0;
+            const minutes = parseInt(match[2], 10) || 0;
+            return hours * 60 + minutes;
+        }
+        const mins = duration.replace("m", "").trim();
+        return parseInt(mins, 10) || null;
+    }
+
+    function getQualityValue(resolutions) {
+        const str = resolutions || "";
+        if (str.includes("2160")) return 2160;
+        if (str.includes("1440")) return 1440;
+        if (str.includes("1080")) return 1080;
+        if (str.includes("720")) return 720;
+        if (str.includes("480")) return 480;
+        if (str.includes("360")) return 360;
+        if (str.includes("240")) return 240;
+        return null;
+    }
+
+    function cleanTitle(title) {
+        if (!title) return "";
+        return title.split("[")[0].trim();
+    }
+
+    const mainPageData = {
+        "4516404531735022304": "Trending",
+        "5692654647815587592": "Trending in Cinema",
+        "414907768299210008": "Bollywood",
+        "3859721901924910512": "South Indian",
+        "8019599703232971616": "Hollywood",
+        "4741626294545400336": "Top Series This Week",
+        "8434602210994128512": "Anime",
+        "1255898847918934600": "Reality TV",
+        "4903182713986896328": "Indian Drama",
+        "7878715743607948784": "Korean Drama",
+        "8788126208987989488": "Chinese Drama",
+        "3910636007619709856": "Western TV",
+        "5177200225164885656": "Turkish Drama",
+        "1|1": "Movies",
+        "1|2": "Series",
+        "1|1006": "Anime",
+        "1|1;country=India": "Indian (Movies)",
+        "1|2;country=India": "Indian (Series)",
+        "1|1;country=Japan": "Japan (Movies)",
+        "1|2;country=Japan": "Japan (Series)",
+        "1|1;country=China": "China (Movies)",
+        "1|2;country=China": "China (Series)",
+        "1|1;country=Korea": "South Korean (Movies)",
+        "1|2;country=Korea": "South Korean (Series)"
+    };
 
     async function getHome(cb) {
         try {
-            const result = {};
-            for (const cat of homeCategories) {
+            const data = {};
+            const perPage = 15;
+
+            for (const [pageKey, categoryName] of Object.entries(mainPageData)) {
                 try {
-                    const apiUrl = `${BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${cat.id}&page=1&perPage=20`;
-                    const body = JSON.stringify({ page: 1, perPage: 20, channelId: cat.id, classify: "All", country: "All", year: "All", genre: "All", sort: "ForYou" });
-                    const res = await http_post(apiUrl, { headers: buildHeaders(apiUrl, body), body, contentType: "application/json; charset=UTF-8" });
-                    const data = JSON.parse(res.body);
-                    const items = [];
-                    for (const item of data?.data?.items || []) {
-                        if (!item.subjectId || !item.title) continue;
-                        items.push(new MultimediaItem({
-                            title: item.title.split("[")[0].trim(),
-                            url: item.subjectId,
-                            posterUrl: item.cover?.url || "",
-                            type: (item.subjectType || 1) === 1 ? "movie" : "series",
-                            contentType: (item.subjectType || 1) === 1 ? "movie" : "series",
-                            score: item.imdbRatingValue ? parseFloat(item.imdbRatingValue) : null
+                    let url, requestBody;
+                    const isSimple = pageKey.includes("|");
+                    
+                    if (isSimple) {
+                        url = `${BASE_URL}/wefeed-mobile-bff/subject-api/list`;
+                        const mainParts = pageKey.split("|");
+                        const pg = 1;
+                        const channelId = mainParts[1];
+                        
+                        const options = {};
+                        const optsPart = pageKey.split(";")[1] || "";
+                        optsPart.split(";").forEach(opt => {
+                            const [k, v] = opt.split("=");
+                            if (k && v) options[k] = v;
+                        });
+
+                        const classify = options["classify"] || "All";
+                        const country = options["country"] || "All";
+                        const year = options["year"] || "All";
+                        const genre = options["genre"] || "All";
+                        const sort = options["sort"] || "ForYou";
+
+                        requestBody = JSON.stringify({
+                            page: pg,
+                            perPage: perPage,
+                            channelId: channelId,
+                            classify: classify,
+                            country: country,
+                            year: year,
+                            genre: genre,
+                            sort: sort
+                        });
+                    } else {
+                        url = `${BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${pageKey}&page=1&perPage=${perPage}`;
+                        requestBody = null;
+                    }
+
+                    const response = await fetchApi(url, requestBody ? "POST" : "GET", requestBody);
+                    
+                    const items = response?.data?.items || response?.data?.subjects || [];
+                    const mediaItems = [];
+
+                    for (const item of items) {
+                        const title = cleanTitle(item.title);
+                        if (!title) continue;
+                        
+                        const id = item.subjectId;
+                        if (!id) continue;
+
+                        const posterUrl = item.cover?.url || "";
+                        const subjectType = item.subjectType || 1;
+                        const type = subjectType === 1 ? "movie" : "series";
+                        
+                        const rating = item.imdbRatingValue ? parseFloat(item.imdbRatingValue) : null;
+
+                        mediaItems.push(new MultimediaItem({
+                            title,
+                            url: id,
+                            posterUrl,
+                            type,
+                            score: rating ? rating * 10 : null
                         }));
                     }
-                    if (items.length > 0) result[cat.name] = items.slice(0, 20);
-                } catch (e) { console.log("Cat error:", e.message); }
+
+                    if (mediaItems.length > 0) {
+                        data[categoryName] = mediaItems;
+                    }
+                } catch (e) {
+                    console.log(`Error fetching ${categoryName}:`, e.message);
+                }
             }
-            cb({ success: true, data: result });
-        } catch (e) { cb({ success: false, errorCode: "HOME_ERROR", message: e.message }); }
+
+            cb({ success: true, data });
+        } catch (e) {
+            cb({ success: false, errorCode: "HOME_ERROR", message: String(e?.message || e) });
+        }
     }
 
     async function search(query, cb) {
         try {
-            const apiUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/search/v2`;
-            const body = JSON.stringify({ page: 1, perPage: 30, keyword: query });
-            const res = await http_post(apiUrl, { headers: buildHeaders(apiUrl, body), body, contentType: "application/json; charset=UTF-8" });
-            const data = JSON.parse(res.body);
-            const items = [];
-            for (const r of data?.data?.results || []) {
-                for (const s of r.subjects || []) {
-                    if (!s.subjectId || !s.title) continue;
-                    items.push(new MultimediaItem({
-                        title: s.title,
-                        url: s.subjectId,
-                        posterUrl: s.cover?.url || "",
-                        type: (s.subjectType || 1) === 1 ? "movie" : "series",
-                        contentType: (s.subjectType || 1) === 1 ? "movie" : "series",
-                        score: s.imdbRatingValue ? parseFloat(s.imdbRatingValue) : null
+            const url = `${BASE_URL}/wefeed-mobile-bff/subject-api/search/v2`;
+            const body = JSON.stringify({
+                page: 1,
+                perPage: 20,
+                keyword: query
+            });
+
+            const response = await fetchApi(url, "POST", body);
+            const results = response?.data?.results || [];
+            const searchList = [];
+
+            for (const result of results) {
+                const subjects = result.subjects || [];
+                for (const subject of subjects) {
+                    const title = cleanTitle(subject.title);
+                    if (!title) continue;
+
+                    const id = subject.subjectId;
+                    if (!id) continue;
+
+                    const posterUrl = subject.cover?.url || "";
+                    const subjectType = subject.subjectType || 1;
+                    const type = subjectType === 1 ? "movie" : "series";
+                    const rating = subject.imdbRatingValue ? parseFloat(subject.imdbRatingValue) : null;
+
+                    searchList.push(new MultimediaItem({
+                        title,
+                        url: id,
+                        posterUrl,
+                        type,
+                        score: rating ? rating * 10 : null
                     }));
                 }
             }
-            cb({ success: true, data: items });
-        } catch (e) { cb({ success: false, errorCode: "SEARCH_ERROR", message: e.message }); }
+
+            cb({ success: true, data: searchList });
+        } catch (e) {
+            cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e?.message || e) });
+        }
     }
 
     async function load(url, cb) {
         try {
-            const id = url.split("subjectId=")[1] || url;
-            const apiUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/get?subjectId=${id}`;
-            const res = await http_get(apiUrl, { headers: buildHeaders(apiUrl) });
-            const data = JSON.parse(res.body);
-            const d = data?.data;
-            if (!d) throw new Error("No data");
-            
-            const title = d.title?.split("[")[0] || "Unknown";
-            const poster = d.cover?.url || "";
-            const isSeries = (d.subjectType || 1) !== 1;
-            
-            if (isSeries) {
-                let episodes = [];
-                try {
-                    const sUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/season-info?subjectId=${id}`;
-                    const sRes = await http_get(sUrl, { headers: buildHeaders(sUrl) });
-                    const sData = JSON.parse(sRes.body);
-                    for (const s of sData?.data?.seasons || []) {
-                        const sn = s.se || 1;
-                        const max = s.maxEp || 1;
-                        for (let e = 1; e <= max; e++) {
-                            episodes.push(new Episode({
-                                name: `S${sn}E${e}`,
-                                url: `${id}|${sn}|${e}`,
-                                season: sn,
-                                episode: e,
-                                posterUrl: poster
-                            }));
-                        }
-                    }
-                } catch {}
-                if (episodes.length === 0) episodes.push(new Episode({ name: "Episode 1", url: `${id}|1|1`, season: 1, episode: 1, posterUrl: poster }));
-                
-                cb({ success: true, data: new MultimediaItem({
-                    title, url: apiUrl, posterUrl: poster, bannerUrl: poster, description: d.description || "",
-                    type: "series", contentType: "series", year: d.releaseDate ? parseInt(d.releaseDate.substring(0, 4)) : null,
-                    tags: d.genre ? d.genre.split(",") : [], score: d.imdbRatingValue ? parseFloat(d.imdbRatingValue) : null, episodes
-                })});
-            } else {
-                cb({ success: true, data: new MultimediaItem({
-                    title, url: apiUrl, posterUrl: poster, bannerUrl: poster, description: d.description || "",
-                    type: "movie", contentType: "movie", year: d.releaseDate ? parseInt(d.releaseDate.substring(0, 4)) : null,
-                    tags: d.genre ? d.genre.split(",") : [], score: d.imdbRatingValue ? parseFloat(d.imdbRatingValue) : null
-                })});
+            let subjectId = url;
+            const match = url.match(/subjectId=([^&]+)/);
+            if (match) {
+                subjectId = match[1];
+            } else if (url.includes("/")) {
+                subjectId = url.substring(url.lastIndexOf("/") + 1);
             }
-        } catch (e) { cb({ success: false, errorCode: "LOAD_ERROR", message: e.message }); }
+
+            const apiUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`;
+            const response = await fetchApi(apiUrl, "GET");
+            const data = response.data;
+
+            if (!data) {
+                throw new Error("No data returned");
+            }
+
+            const title = cleanTitle(data.title);
+            const description = data.description || "";
+            const releaseDate = data.releaseDate || "";
+            const year = releaseDate ? parseInt(releaseDate.substring(0, 4), 10) : null;
+            const duration = data.duration;
+            const durationMinutes = parseDuration(duration);
+            const genre = data.genre || "";
+            const tags = genre.split(",").map(t => t.trim()).filter(t => t);
+            const imdbRating = data.imdbRatingValue ? parseFloat(data.imdbRatingValue) * 10 : null;
+
+            const posterUrl = data.cover?.url || "";
+            const backgroundUrl = data.cover?.url || "";
+
+            const subjectType = data.subjectType || 1;
+            const isSeries = subjectType === 2 || subjectType === 7;
+            const type = isSeries ? "series" : "movie";
+
+            const actors = [];
+            const staffList = data.staffList || [];
+            for (const staff of staffList) {
+                if (staff.staffType === 1) {
+                    const name = staff.name;
+                    const character = staff.character;
+                    const avatarUrl = staff.avatarUrl;
+                    if (name) {
+                        actors.push(new Actor({
+                            name,
+                            role: character,
+                            image: avatarUrl
+                        }));
+                    }
+                }
+            }
+
+            if (isSeries) {
+                const allSubjectIds = [subjectId];
+                const dubs = data.dubs || [];
+                for (const dub of dubs) {
+                    const sid = dub.subjectId;
+                    const lanName = dub.lanName;
+                    if (sid && lanName && !allSubjectIds.includes(sid)) {
+                        allSubjectIds.push(sid);
+                    }
+                }
+
+                const episodeMap = {};
+
+                for (const sid of allSubjectIds) {
+                    try {
+                        const seasonUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/season-info?subjectId=${sid}`;
+                        const seasonResponse = await fetchApi(seasonUrl, "GET");
+                        const seasons = seasonResponse?.data?.seasons;
+
+                        if (!seasons || !Array.isArray(seasons) || seasons.length === 0) {
+                            continue;
+                        }
+
+                        for (const season of seasons) {
+                            const seasonNumber = season.se || 1;
+                            const maxEp = season.maxEp || 1;
+
+                            if (!episodeMap[seasonNumber]) {
+                                episodeMap[seasonNumber] = new Set();
+                            }
+
+                            for (let ep = 1; ep <= maxEp; ep++) {
+                                episodeMap[seasonNumber].add(ep);
+                            }
+                        }
+                    } catch (e) {
+                        console.log("Error fetching season:", e.message);
+                    }
+                }
+
+                const episodes = [];
+                const sortedSeasons = Object.keys(episodeMap).map(Number).sort((a, b) => a - b);
+
+                for (const seasonNumber of sortedSeasons) {
+                    const epSet = episodeMap[seasonNumber];
+                    const sortedEps = Array.from(epSet).sort((a, b) => a - b);
+
+                    for (const episodeNumber of sortedEps) {
+                        episodes.push(new Episode({
+                            name: `S${seasonNumber}E${episodeNumber}`,
+                            url: `${subjectId}|${seasonNumber}|${episodeNumber}`,
+                            season: seasonNumber,
+                            episode: episodeNumber,
+                            posterUrl
+                        }));
+                    }
+                }
+
+                if (episodes.length === 0) {
+                    episodes.push(new Episode({
+                        name: "Episode 1",
+                        url: `${subjectId}|1|1`,
+                        season: 1,
+                        episode: 1,
+                        posterUrl
+                    }));
+                }
+
+                cb({
+                    success: true,
+                    data: new MultimediaItem({
+                        title,
+                        url: apiUrl,
+                        posterUrl,
+                        backgroundPosterUrl: backgroundUrl,
+                        description,
+                        type,
+                        contentType: type,
+                        year,
+                        tags,
+                        actors,
+                        duration: durationMinutes,
+                        score: imdbRating,
+                        episodes
+                    })
+                });
+            } else {
+                cb({
+                    success: true,
+                    data: new MultimediaItem({
+                        title,
+                        url: apiUrl,
+                        posterUrl,
+                        backgroundPosterUrl: backgroundUrl,
+                        description,
+                        type,
+                        contentType: type,
+                        year,
+                        tags,
+                        actors,
+                        duration: durationMinutes,
+                        score: imdbRating
+                    })
+                });
+            }
+        } catch (e) {
+            cb({ success: false, errorCode: "LOAD_ERROR", message: String(e?.message || e) });
+        }
     }
 
     async function loadStreams(url, cb) {
         try {
             const parts = url.split("|");
-            const id = parts[0].split("subjectId=")[1] || parts[0];
-            const season = parseInt(parts[1]) || 0;
-            const episode = parseInt(parts[2]) || 0;
+            let subjectId = parts[0];
             
-            const apiUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/play-info?subjectId=${id}&se=${season}&ep=${episode}`;
-            const res = await http_get(apiUrl, { headers: buildHeaders(apiUrl) });
-            const data = JSON.parse(res.body);
-            
-            const streams = [];
-            for (const s of data?.data?.streams || []) {
-                if (!s.url) continue;
-                let quality = "Auto";
-                if (s.resolutions?.includes("1080")) quality = "1080p";
-                else if (s.resolutions?.includes("720")) quality = "720p";
-                else if (s.resolutions?.includes("480")) quality = "480p";
-                
-                let type = "VIDEO";
-                if (s.url.endsWith(".m3u8") || s.format === "HLS") type = "M3U8";
-                else if (s.url.startsWith("magnet:")) type = "TORRENT";
-                
-                streams.push(new StreamResult({
-                    url: s.url, quality, name: "MovieBox", source: "MovieBox", type, headers: { "Referer": BASE_URL }
-                }));
+            const match = subjectId.match(/subjectId=([^&]+)/);
+            if (match) {
+                subjectId = match[1];
+            } else if (subjectId.includes("/")) {
+                subjectId = subjectId.substring(subjectId.lastIndexOf("/") + 1);
             }
-            
-            cb({ success: true, data: streams });
-        } catch (e) { cb({ success: false, errorCode: "STREAM_ERROR", message: e.message }); }
+
+            const season = parts[1] ? parseInt(parts[1], 10) : 0;
+            const episode = parts[2] ? parseInt(parts[2], 10) : 0;
+
+            const subjectUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`;
+            const subjectResponse = await fetchApi(subjectUrl, "GET");
+            const subjectData = subjectResponse.data;
+
+            let subjectIds = [];
+            let originalLanguageName = "Original";
+
+            if (subjectData) {
+                const dubs = subjectData.dubs || [];
+                for (const dub of dubs) {
+                    const dubSubjectId = dub.subjectId;
+                    const lanName = dub.lanName;
+                    if (dubSubjectId && lanName) {
+                        if (dubSubjectId === subjectId) {
+                            originalLanguageName = lanName;
+                        } else {
+                            subjectIds.push({ id: dubSubjectId, language: lanName });
+                        }
+                    }
+                }
+            }
+
+            subjectIds.unshift({ id: subjectId, language: originalLanguageName });
+
+            const allStreams = [];
+            const bm = randomBrandModel();
+
+            for (const { id: sid, language } of subjectIds) {
+                try {
+                    const playUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/play-info?subjectId=${sid}&se=${season}&ep=${episode}`;
+                    const response = await fetchApi(playUrl, "GET");
+                    const playData = response.data;
+                    const streams = playData?.streams;
+
+                    if (streams && Array.isArray(streams)) {
+                        for (const stream of streams) {
+                            const streamUrl = stream.url;
+                            if (!streamUrl) continue;
+
+                            const resolutions = stream.resolutions || "";
+                            const format = stream.format || "";
+                            const id = stream.id || `${sid}|${season}|${episode}`;
+                            
+                            const quality = getQualityValue(resolutions);
+                            const langLabel = language.replace("dub", "Audio");
+
+                            allStreams.push(new StreamResult({
+                                url: streamUrl,
+                                quality: quality ? `${quality}p` : "Auto",
+                                source: `MovieBox ${langLabel}`,
+                                headers: { "Referer": BASE_URL }
+                            }));
+                        }
+                    }
+
+                    if (!streams || streams.length === 0) {
+                        const fallbackUrl = `${BASE_URL}/wefeed-mobile-bff/subject-api/get?subjectId=${sid}`;
+                        const fallbackResponse = await fetchApi(fallbackUrl, "GET");
+                        const detectors = fallbackResponse?.data?.resourceDetectors;
+
+                        if (detectors && Array.isArray(detectors)) {
+                            for (const detector of detectors) {
+                                const resolutionList = detector.resolutionList || [];
+                                for (const video of resolutionList) {
+                                    const link = video.resourceLink;
+                                    if (!link) continue;
+
+                                    const quality = video.resolution || 0;
+                                    const se = video.se || 0;
+                                    const ep = video.ep || 0;
+                                    const langLabel = language.replace("dub", "Audio");
+
+                                    allStreams.push(new StreamResult({
+                                        url: link,
+                                        quality: quality > 0 ? `${quality}p` : "Auto",
+                                        source: `MovieBox S${se}E${ep} ${langLabel}`,
+                                        headers: { "Referer": BASE_URL }
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.log("Error processing stream:", e.message);
+                }
+            }
+
+            const uniqueStreams = [];
+            const seenUrls = new Set();
+            for (const stream of allStreams) {
+                if (!seenUrls.has(stream.url)) {
+                    seenUrls.add(stream.url);
+                    uniqueStreams.push(stream);
+                }
+            }
+
+            cb({ success: true, data: uniqueStreams });
+        } catch (e) {
+            cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
+        }
     }
 
     globalThis.getHome = getHome;
