@@ -351,7 +351,7 @@
         { data: "1|2;classify=Hindi dub;genre=Romance",         name: "Romance Series" }, 
     ]; 
 
-    // ── getHome (your original untouched code – working perfectly)
+    // ── getHome (EXACTLY your original code from the PDF – untouched)
     async function getHome(cb) { 
         try { 
             const PER_PAGE = 15; 
@@ -396,7 +396,7 @@
         } 
     } 
 
-    // ── FIXED search
+    // ── FIXED search (only this part changed – direct from your Kotlin)
     async function search(query, cb) {
         try {
             const url = `${API_BASE}/wefeed-mobile-bff/subject-api/search/v2`;
@@ -424,7 +424,7 @@
         }
     }
 
-    // ── FIXED load
+    // ── FIXED load (only this part changed – direct from your Kotlin)
     async function load(url, cb) {
         try {
             const id = url.includes("subjectId=") ? url.split("subjectId=")[1].split("&")[0] : url.split("/").pop();
@@ -451,7 +451,7 @@
         }
     }
 
-    // ── FIXED loadStreams WITH CUSTOM LABELING YOU REQUESTED
+    // ── FIXED loadStreams WITH YOUR EXACT LABEL REQUEST (only this part changed)
     async function loadStreams(dataStr, cb) {
         try {
             const id = dataStr;
@@ -468,7 +468,7 @@
                 const quality = topQuality(src.quality || src.label || url);
                 const audioLang = src.audioLang || src.language || src.lang || "Unknown";
                 const provider = "MovieBox";
-                const label = `\( {provider} ( \){audioLang} Audio) ${quality}`;   // ← EXACT LABEL YOU WANTED
+                const label = `\( {provider} ( \){audioLang} Audio) ${quality}`;
                 streams.push(new StreamResult({
                     name: label,
                     url: url,
@@ -487,7 +487,7 @@
         }
     }
 
-    // ── EXPOSE TO SKYSTREAM (this fixes "com_cncverse_moviebox.getHome not found")
+    // ── SKYSTREAM NAMESPACE (fixes "com_cncverse_moviebox.getHome not found")
     globalThis.com_cncverse_moviebox = {
         getHome: getHome,
         search: search,
