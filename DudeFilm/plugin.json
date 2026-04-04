@@ -1,18 +1,10 @@
 {
-  "packageName": "dev.dudefilms.skystream",
+  "packageName": "com.dudefilms.skystream",
   "name": "DudeFilms",
   "version": 1,
-  "baseUrl": "https://dudefilms.llc",
-  "description": "Indian Movies and TV Series - Bollywood, Hollywood, South Indian, Web Series",
-  "authors": [
-    "DudeFilms"
-  ],
-  "languages": [
-    "hi",
-    "en"
-  ],
-  "categories": [
-    "Movie",
-    "TvSeries"
-  ]
+  "baseUrl": "https://dudefilms.sarl",
+  "description": "DudeFilms Provider - Bollywood, Hollywood, South Indian, Web Series and more",
+  "authors": ["DudeFilms Team"],
+  "languages": ["hi", "en"],
+  "categories": ["Movie", "TvSeries", "Anime"]
 }
