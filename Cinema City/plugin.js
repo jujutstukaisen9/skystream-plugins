@@ -1,651 +1,403 @@
-/**
- * CinemaCity SkyStream Plugin
- * Ported from CloudStream Kotlin provider
- *
- * Features:
- * - Homepage categories (Movies, TV Series, Anime, Asian, Animation, Documentary)
- * - Search functionality
- * - TMDB/Cinemeta metadata integration
- * - Stream extraction from PlayerJS
- * - Quality detection
- * - Subtitle support
- */
-
 (function() {
-    'use strict';
+  /**
+   * @type {import('@skystream/sdk').Manifest}
+   */
+  const BASE_URL = () => (typeof manifest !== "undefined" && manifest.baseUrl) ? manifest.baseUrl : "https://cinemacity.cc";
 
-    // =========================================================================
-    // CONSTANTS
-    // =========================================================================
+  const TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
+  const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
+  const CINEMETA_URL = "https://v3-cinemeta.strem.io/meta";
+  const LOGO_BASE = "https://live.metahub.space/logo/medium";
 
-    const BASE_URL = manifest?.baseUrl || 'https://cinemacity.cc';
-    const TMDB_API_KEY = '1865f43a0549ca50d341dd9ab8b29f49';
-    const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/original';
-    const CINEMETA_URL = 'https://v3-cinemeta.strem.io/meta';
-    const METAHUB_LOGO = 'https://live.metahub.space/logo/medium';
+  const DEFAULT_HEADERS = {
+    "Cookie": base64Decode("ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs=")
+  };
 
-    // Base64 decoded cookie from Kotlin source
-    const COOKIE = atob('ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs=');
+  const MAIN_CATEGORIES = [
+    { name: "Movies", path: "movies" },
+    { name: "TV Series", path: "tv-series" },
+    { name: "Anime", path: "xfsearch/genre/anime" },
+    { name: "Asian", path: "xfsearch/genre/asian" },
+    { name: "Animation", path: "xfsearch/genre/animation" },
+    { name: "Documentary", path: "xfsearch/genre/documentary" }
+  ];
 
-    const HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Cookie': COOKIE,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': BASE_URL + '/'
-    };
+  function base64Decode(str) {
+    if (!str) return "";
+    if (typeof atob === "function") return atob(str);
+    if (typeof Buffer !== "undefined") return Buffer.from(str, "base64").toString("utf8");
+    return "";
+  }
 
-    // =========================================================================
-    // HELPER FUNCTIONS
-    // =========================================================================
+  function absUrl(url) {
+    if (!url) return "";
+    if (url.startsWith("//")) return "https:" + url;
+    if (url.startsWith("/")) return BASE_URL() + url;
+    return url;
+  }
 
-    /**
-     * Fix URL to ensure proper format
-     */
-    function fixUrl(url, base) {
-        if (!url) return '';
-        base = base || BASE_URL;
-        if (url.startsWith('//')) {
-            return 'https:' + url;
-        }
-        if (url.startsWith('/')) {
-            return base + url;
-        }
-        if (!url.startsWith('http')) {
-            return base + '/' + url;
-        }
-        return url;
+  function text(el) {
+    return (el && el.textContent ? el.textContent : "").trim();
+  }
+
+  function attr(el, name) {
+    return el && el.getAttribute ? (el.getAttribute(name) || "") : "";
+  }
+
+  function safeJsonParse(str) {
+    try {
+      return JSON.parse(str);
+    } catch {
+      return null;
+    }
+  }
+
+  function parseCredits(jsonText) {
+    if (!jsonText) return [];
+    const root = safeJsonParse(jsonText);
+    const cast = root && Array.isArray(root.cast) ? root.cast : [];
+    return cast.map(c => new Actor({
+      name: c.name || c.original_name || "",
+      role: c.character || "",
+      image: c.profile_path ? TMDB_IMAGE_BASE + c.profile_path : ""
+    })).filter(a => a.name);
+  }
+
+  function parseSubtitles(raw) {
+    if (!raw || typeof raw !== "string") return [];
+    const out = [];
+    const parts = raw.split(",").map(p => p.trim()).filter(Boolean);
+    for (const part of parts) {
+      const match = part.match(/\[(.+?)\](https?:\/\/[^\s]+)/i);
+      if (match) {
+        out.push({ language: match[1], subtitleUrl: match[2] });
+      }
+    }
+    return out;
+  }
+
+  function extractQuality(url) {
+    const u = (url || "").toLowerCase();
+    if (u.includes("2160")) return "2160p";
+    if (u.includes("1440")) return "1440p";
+    if (u.includes("1080")) return "1080p";
+    if (u.includes("720")) return "720p";
+    if (u.includes("480")) return "480p";
+    if (u.includes("360")) return "360p";
+    if (u.includes("240")) return "240p";
+    return "Auto";
+  }
+
+  function toSearchResult(el) {
+    const a = el && el.querySelector ? el.querySelector("a") : null;
+    if (!a) return null;
+    const titleRaw = text(a) || attr(a, "title");
+    const title = (titleRaw || "").split("(")[0].trim() || "Untitled";
+    const href = absUrl(attr(a, "href"));
+    let poster = "";
+    const posterEl = el.querySelector("div.dar-short_bg a") || el.querySelector("img");
+    if (posterEl) {
+      poster = absUrl(attr(posterEl, "href") || attr(posterEl, "src"));
+    }
+    const scoreTxt = text(el.querySelector("span.rating-color"));
+    let qualityTxt = text(el.querySelector("div.dar-short_bg.e-cover > div span:nth-child(2) > a"));
+    if (!qualityTxt) qualityTxt = text(el.querySelector("div.dar-short_bg.e-cover > div > span"));
+    const quality = qualityTxt && qualityTxt.toUpperCase().includes("TS") ? "TS" : "HD";
+    const type = href.includes("/tv-series/") ? "series" : "movie";
+    const item = new MultimediaItem({ title, url: href, posterUrl: poster, type });
+    if (scoreTxt) item.score = parseFloat(scoreTxt) || scoreTxt;
+    if (quality) item.quality = quality;
+    return item;
+  }
+
+  function extractImdbId(doc) {
+    const nodes = doc.querySelectorAll ? Array.from(doc.querySelectorAll("div.ta-full_rating1 > div")) : [];
+    for (const n of nodes) {
+      const onclick = attr(n, "onclick");
+      const match = onclick.match(/tt\d+/i);
+      if (match) return match[0];
+    }
+    return "";
+  }
+
+  function parsePlayerJs(doc) {
+    const scripts = doc.querySelectorAll ? Array.from(doc.querySelectorAll("script")) : [];
+    for (const s of scripts) {
+      const textContent = (s.textContent || s.innerHTML || s.data || "");
+      if (!textContent.includes("atob(")) continue;
+      const match = textContent.match(/atob\((['\"])(.*?)\1\)/);
+      if (!match) continue;
+      const decoded = base64Decode(match[2]);
+      const start = decoded.indexOf("new Playerjs(");
+      if (start === -1) continue;
+      const after = decoded.slice(start + "new Playerjs(".length);
+      const end = after.lastIndexOf(");");
+      const jsonText = (end === -1 ? after : after.slice(0, end)).trim();
+      const player = safeJsonParse(jsonText);
+      if (player) return player;
+    }
+    return null;
+  }
+
+  function normalizeFileArray(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === "object") return [raw];
+    if (typeof raw === "string") {
+      const v = raw.trim();
+      if (!v) return [];
+      if ((v.startsWith("[") && v.endsWith("]")) || (v.startsWith("{") && v.endsWith("}"))) {
+        const parsed = safeJsonParse(v);
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === "object") return [parsed];
+      }
+      return [{ file: v }];
+    }
+    return [];
+  }
+
+  function buildEpisodes(player, meta, type) {
+    const fileArray = normalizeFileArray(player ? player.file : null);
+    const episodeMetaMap = {};
+    const videos = meta && Array.isArray(meta.videos) ? meta.videos : [];
+    for (const v of videos) {
+      if (v.season != null && v.episode != null) {
+        episodeMetaMap[`${v.season}:${v.episode}`] = v;
+      }
     }
 
-    /**
-     * Extract quality from URL or text
-     */
-    function extractQuality(input) {
-        if (!input) return 0;
-        const text = String(input).toLowerCase();
-        if (text.includes('2160p') || text.includes('4k')) return 2160;
-        if (text.includes('1440p')) return 1440;
-        if (text.includes('1080p')) return 1080;
-        if (text.includes('720p')) return 720;
-        if (text.includes('480p')) return 480;
-        if (text.includes('360p')) return 360;
-        return 0; // Unknown
+    const episodes = [];
+    let movieData = null;
+
+    const isSeries = type === "series" && fileArray.some(f => f && f.folder);
+    if (!isSeries) {
+      const first = fileArray[0] || {};
+      const streamUrl = typeof first.file === "string" ? first.file : "";
+      const subtitleRaw = typeof (player && player.subtitle) === "string"
+        ? player.subtitle
+        : (typeof first.subtitle === "string" ? first.subtitle : "");
+      movieData = JSON.stringify({ streamUrl, subtitleTracks: parseSubtitles(subtitleRaw) });
+      return { episodes, movieData };
     }
 
-    /**
-     * Parse subtitles from raw string format
-     * Format: "[Language]https://subtitle.url"
-     */
-    function parseSubtitles(raw) {
-        const tracks = [];
-        if (!raw) return tracks;
+    for (const seasonJson of fileArray) {
+      const seasonTitle = seasonJson && seasonJson.title ? String(seasonJson.title) : "";
+      const seasonMatch = seasonTitle.match(/Season\s*(\d+)/i);
+      const seasonNumber = seasonMatch ? parseInt(seasonMatch[1]) : null;
+      const seasonFolder = seasonJson && Array.isArray(seasonJson.folder) ? seasonJson.folder : [];
+      if (!seasonNumber || !seasonFolder.length) continue;
 
-        const parts = raw.split(',');
-        for (const entry of parts) {
-            const match = entry.trim().match(/\[(.+?)\](https?:\/\/.+)/);
-            if (match) {
-                tracks.push({
-                    language: match[1],
-                    subtitleUrl: match[2]
-                });
-            }
+      for (const epJson of seasonFolder) {
+        const epTitle = epJson && epJson.title ? String(epJson.title) : "";
+        const epMatch = epTitle.match(/Episode\s*(\d+)/i);
+        const episodeNumber = epMatch ? parseInt(epMatch[1]) : null;
+        if (!episodeNumber) continue;
+
+        const streams = [];
+        if (typeof epJson.file === "string" && epJson.file.trim()) streams.push(epJson.file.trim());
+        if (Array.isArray(epJson.folder)) {
+          for (const f of epJson.folder) {
+            if (f && typeof f.file === "string" && f.file.trim()) streams.push(f.file.trim());
+          }
         }
-        return tracks;
-    }
+        if (!streams.length) continue;
 
-    /**
-     * Parse TMDB credits JSON to Actor array
-     */
-    function parseCredits(jsonText) {
-        if (!jsonText) return [];
-        try {
-            const root = typeof jsonText === 'string' ? JSON.parse(jsonText) : jsonText;
-            const castArr = root.cast || [];
-            return castArr.map(c => {
-                const name = c.name || c.original_name || '';
-                const profile = c.profile_path ? TMDB_IMAGE_BASE + c.profile_path : null;
-                const character = c.character || null;
-                return new Actor({
-                    name: name,
-                    image: profile,
-                    role: character
-                });
-            }).filter(a => a.name);
-        } catch (e) {
-            console.error('Parse credits error:', e);
-            return [];
-        }
-    }
+        const metaKey = `${seasonNumber}:${episodeNumber}`;
+        const epMeta = episodeMetaMap[metaKey];
+        const subtitleTracks = parseSubtitles(typeof epJson.subtitle === "string" ? epJson.subtitle : "");
+        const epData = JSON.stringify({ streams, subtitleTracks });
 
-    /**
-     * Fetch JSON with error handling
-     */
-    async function fetchJson(url, headers) {
-        const res = await http_get(url, headers);
-        if (res.status !== 200) {
-            throw new Error(`HTTP ${res.status}`);
-        }
-        return JSON.parse(res.body);
-    }
-
-    /**
-     * Get TMDB metadata for IMDB ID
-     */
-    async function getTmdbId(imdbId, type) {
-        if (!imdbId) return null;
-        try {
-            const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
-            const data = await fetchJson(url, {});
-            const results = type === 'tv'
-                ? (data.tv_results || [])
-                : (data.movie_results || []);
-            return results[0]?.id || null;
-        } catch (e) {
-            console.error('TMDB ID lookup error:', e);
-            return null;
-        }
-    }
-
-    /**
-     * Get credits from TMDB
-     */
-    async function getTmdbCredits(tmdbId, type) {
-        if (!tmdbId) return null;
-        try {
-            const endpoint = type === 'tv' ? 'tv' : 'movie';
-            const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}/credits?api_key=${TMDB_API_KEY}&language=en-US`;
-            return await fetchJson(url, {});
-        } catch (e) {
-            console.error('TMDB credits error:', e);
-            return null;
-        }
-    }
-
-    /**
-     * Get metadata from Cinemeta
-     */
-    async function getCinemetaMeta(imdbId, type) {
-        if (!imdbId) return null;
-        try {
-            const typeset = type === 'tv' ? 'series' : 'movie';
-            const url = `${CINEMETA_URL}/${typeset}/${imdbId}.json`;
-            const data = await fetchJson(url, {});
-            return data.meta || null;
-        } catch (e) {
-            console.error('Cinemeta error:', e);
-            return null;
-        }
-    }
-
-    /**
-     * Extract IMDB ID from onclick attribute
-     */
-    function extractImdbId(onclickAttr) {
-        if (!onclickAttr) return null;
-        const match = onclickAttr.match(/tt\d+/);
-        return match ? match[0] : null;
-    }
-
-    /**
-     * Extract year from title string like "Movie Name (2024)"
-     */
-    function extractYear(title) {
-        if (!title) return null;
-        const match = title.match(/\((\d{4})\)/);
-        return match ? parseInt(match[1]) : null;
-    }
-
-    // =========================================================================
-    // SEARCH RESULT PARSING
-    // =========================================================================
-
-    /**
-     * Convert DOM element to MultimediaItem search result
-     */
-    function elementToSearchResult(el) {
-        const linkEl = el.querySelector('a');
-        if (!linkEl) return null;
-
-        const href = linkEl.getAttribute('href') || '';
-        const title = linkEl.textContent?.substringBefore('(')?.trim() || 'Unknown';
-        const posterEl = el.querySelector('.dar-short_bg a');
-        const posterUrl = posterEl ? fixUrl(posterEl.getAttribute('href')) : null;
-        const scoreEl = el.querySelector('span.rating-color');
-        const score = scoreEl ? parseFloat(scoreEl.textContent) / 10 * 10 : null;
-
-        // Extract quality from span element
-        const qualitySpan = el.querySelector('.dar-short_bg.e-cover > div span:nth-child(2) > a');
-        let qualityStr = qualitySpan?.textContent;
-        if (!qualityStr) {
-            const altSpan = el.querySelector('.dar-short_bg.e-cover > div > span');
-            qualityStr = altSpan?.textContent;
-        }
-        const isTS = qualityStr?.toLowerCase().includes('ts');
-        const quality = isTS ? 'TS' : 'HD';
-
-        const type = href.toLowerCase().includes('/tv-series/') ? 'series' : 'movie';
-
-        return new MultimediaItem({
-            title: title,
-            url: href,
-            posterUrl: posterUrl,
-            type: type,
-            score: score
+        const ep = new Episode({
+          name: (epMeta && epMeta.name) ? epMeta.name : `S${seasonNumber}E${episodeNumber}`,
+          url: epData,
+          season: seasonNumber,
+          episode: episodeNumber,
+          description: epMeta && epMeta.overview ? epMeta.overview : "",
+          posterUrl: epMeta && epMeta.thumbnail ? epMeta.thumbnail : ""
         });
+        episodes.push(ep);
+      }
     }
 
-    // =========================================================================
-    // HOME PAGE (getHome)
-    // =========================================================================
+    episodes.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+    return { episodes, movieData };
+  }
 
-    async function getHome(cb) {
-        try {
-            const categories = [
-                { path: 'movies', name: 'Movies' },
-                { path: 'tv-series', name: 'TV Series' },
-                { path: 'xfsearch/genre/anime', name: 'Anime' },
-                { path: 'xfsearch/genre/asian', name: 'Asian' },
-                { path: 'xfsearch/genre/animation', name: 'Animation' },
-                { path: 'xfsearch/genre/documentary', name: 'Documentary' }
-            ];
+  async function getHome(cb) {
+    try {
+      const out = {};
+      for (const cat of MAIN_CATEGORIES) {
+        const url = `${BASE_URL()}/${cat.path}`;
+        const res = await http_get(url, DEFAULT_HEADERS);
+        const doc = await parseHtml(res.body);
+        const cards = doc.querySelectorAll ? Array.from(doc.querySelectorAll("div.dar-short_item")) : [];
+        const items = cards.map(toSearchResult).filter(Boolean);
+        if (items.length) out[cat.name] = items;
+      }
+      cb({ success: true, data: out });
+    } catch (e) {
+      cb({ success: false, errorCode: "HOME_ERROR", message: e.message });
+    }
+  }
 
-            const homeData = {};
+  async function search(query, cb) {
+    try {
+      const url = `${BASE_URL()}/index.php?do=search&subaction=search&search_start=1&full_search=0&story=${encodeURIComponent(query)}`;
+      const res = await http_get(url, DEFAULT_HEADERS);
+      const doc = await parseHtml(res.body);
+      const cards = doc.querySelectorAll ? Array.from(doc.querySelectorAll("div.dar-short_item")) : [];
+      const items = cards.map(toSearchResult).filter(Boolean);
+      cb({ success: true, data: items });
+    } catch (e) {
+      cb({ success: false, errorCode: "SEARCH_ERROR", message: e.message });
+    }
+  }
 
-            for (const cat of categories) {
-                const url = `${BASE_URL}/${cat.path}`;
-                const res = await http_get(url, HEADERS);
+  async function load(url, cb) {
+    try {
+      const res = await http_get(url, DEFAULT_HEADERS);
+      const doc = await parseHtml(res.body);
 
-                if (res.status !== 200) continue;
+      const ogTitle = attr(doc.querySelector("meta[property='og:title']"), "content");
+      const title = (ogTitle || "").split("(")[0].trim() || "Unknown";
+      const poster = attr(doc.querySelector("meta[property='og:image']"), "content");
+      const bgposter = attr(doc.querySelector("div.dar-full_bg a"), "href");
+      const trailer = attr(doc.querySelector("div.dar-full_bg.e-cover > div"), "data-vbg");
+      const about = text(doc.querySelector("#about div.ta-full_text1"));
 
-                const doc = await parseHtml(res.body);
-                const items = Array.from(doc.querySelectorAll('div.dar-short_item'))
-                    .map(el => elementToSearchResult(el))
-                    .filter(Boolean);
-
-                if (items.length > 0) {
-                    homeData[cat.name] = items;
-                }
-            }
-
-            cb({ success: true, data: homeData });
-        } catch (e) {
-            console.error('getHome error:', e);
-            cb({ success: false, errorCode: 'HOME_ERROR', message: e.message });
+      let audioLangs = "";
+      const lis = doc.querySelectorAll ? Array.from(doc.querySelectorAll("li")) : [];
+      for (const li of lis) {
+        const spans = li.querySelectorAll ? Array.from(li.querySelectorAll("span")) : [];
+        const label = spans[0] ? text(spans[0]).toLowerCase() : "";
+        if (label === "audio language") {
+          const langLinks = spans[1] ? Array.from(spans[1].querySelectorAll("a")) : [];
+          audioLangs = langLinks.map(a => text(a)).filter(Boolean).join(", ");
+          break;
         }
-    }
+      }
 
-    // =========================================================================
-    // SEARCH (search)
-    // =========================================================================
+      const recommendations = [];
+      const recs = doc.querySelectorAll ? Array.from(doc.querySelectorAll("div.ta-rel > div.ta-rel_item")) : [];
+      for (const r of recs) {
+        const a = r.querySelector ? r.querySelector("a") : null;
+        const rTitle = text(a);
+        const rHref = absUrl(attr(a, "href"));
+        const rPoster = absUrl(attr(r.querySelector("div > a"), "href"));
+        const rScoreTxt = text(r.querySelector("span.rating-color1"));
+        if (!rTitle || !rHref) continue;
+        const item = new MultimediaItem({ title: rTitle, url: rHref, posterUrl: rPoster, type: rHref.includes("/tv-series/") ? "series" : "movie" });
+        if (rScoreTxt) item.score = parseFloat(rScoreTxt) || rScoreTxt;
+        recommendations.push(item);
+      }
 
-    async function search(query, cb) {
+      const yearMatch = ogTitle.match(/\((\d{4})\)/);
+      const year = yearMatch ? parseInt(yearMatch[1]) : null;
+      const type = url.includes("/movies/") ? "movie" : "series";
+      const tmdbType = type === "series" ? "tv" : "movie";
+
+      const imdbId = extractImdbId(doc);
+      let tmdbId = null;
+      if (imdbId) {
         try {
-            const encodedQuery = encodeURIComponent(query);
-            const url = `${BASE_URL}/index.php?do=search&subaction=search&search_start=1&full_search=0&story=${encodedQuery}`;
+          const findUrl = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
+          const findRes = await http_get(findUrl, {});
+          const findJson = safeJsonParse(findRes.body) || {};
+          tmdbId = (findJson.movie_results && findJson.movie_results[0] && findJson.movie_results[0].id)
+            || (findJson.tv_results && findJson.tv_results[0] && findJson.tv_results[0].id)
+            || null;
+        } catch {}
+      }
 
-            const res = await http_get(url, HEADERS);
-
-            if (res.status !== 200) {
-                return cb({ success: false, errorCode: 'SEARCH_ERROR', message: 'HTTP ' + res.status });
-            }
-
-            const doc = await parseHtml(res.body);
-            const items = Array.from(doc.querySelectorAll('div.dar-short_item'))
-                .map(el => elementToSearchResult(el))
-                .filter(Boolean);
-
-            cb({ success: true, data: items });
-        } catch (e) {
-            console.error('search error:', e);
-            cb({ success: false, errorCode: 'SEARCH_ERROR', message: e.message });
-        }
-    }
-
-    // =========================================================================
-    // LOAD (load)
-    // =========================================================================
-
-    async function load(url, cb) {
+      let cast = [];
+      if (tmdbId) {
         try {
-            const res = await http_get(url, HEADERS);
+          const creditsUrl = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}/credits?api_key=${TMDB_API_KEY}&language=en-US`;
+          const creditsRes = await http_get(creditsUrl, {});
+          cast = parseCredits(creditsRes.body);
+        } catch {}
+      }
 
-            if (res.status !== 200) {
-                return cb({ success: false, errorCode: 'LOAD_ERROR', message: 'HTTP ' + res.status });
-            }
-
-            const doc = await parseHtml(res.body);
-
-            // Extract basic metadata
-            const ogTitle = doc.querySelector('meta[property="og:title"]')?.getAttribute('content') || '';
-            const title = ogTitle.substringBefore('(').trim();
-            const poster = fixUrl(doc.querySelector('meta[property="og:image"]')?.getAttribute('content'));
-            const bgposter = doc.querySelector('div.dar-full_bg a')?.getAttribute('href');
-            const trailerData = doc.querySelector('div.dar-full_bg.e-cover > div')?.getAttribute('data-vbg');
-
-            // Extract year
-            const year = extractYear(ogTitle);
-
-            // Determine media type
-            const isTvSeries = url.toLowerCase().includes('/tv-series/');
-            const tvType = isTvSeries ? 'series' : 'movie';
-
-            // Get description
-            const descriptions = doc.querySelector('#about div.ta-full_text1')?.textContent?.trim() || '';
-
-            // Extract IMDB ID from onclick attributes
-            const ratingDivs = doc.querySelectorAll('div.ta-full_rating1 > div');
-            let imdbId = null;
-            for (const div of ratingDivs) {
-                const onclick = div.getAttribute('onclick');
-                imdbId = extractImdbId(onclick);
-                if (imdbId) break;
-            }
-
-            // Extract audio languages
-            const audioLangLi = Array.from(doc.querySelectorAll('li')).find(li => {
-                const span = li.querySelector('span');
-                return span?.textContent?.toLowerCase() === 'audio language';
-            });
-            const audioLanguages = audioLangLi
-                ? Array.from(audioLangLi.querySelectorAll('span:nth-child(2) a'))
-                    .map(a => a.textContent?.trim())
-                    .filter(Boolean)
-                    .join(', ')
-                : null;
-
-            // Get recommendations
-            const recommendations = Array.from(doc.querySelectorAll('div.ta-rel > div.ta-rel_item')).map(rel => {
-                const relTitle = rel.querySelector('a')?.textContent?.substringBefore('(')?.trim() || '';
-                const relHref = fixUrl(rel.querySelector('> div > a')?.getAttribute('href'));
-                const relScore = rel.querySelector('span.rating-color1')?.textContent;
-                const relPoster = rel.querySelector('div > a')?.getAttribute('href');
-                return new MultimediaItem({
-                    title: relTitle,
-                    url: relHref,
-                    posterUrl: relPoster,
-                    type: 'movie',
-                    score: relScore ? parseFloat(relScore) : null
-                });
-            }).filter(r => r.title);
-
-            // TMDB integration for additional metadata
-            let tmdbId = null;
-            let logoUrl = null;
-            let castList = [];
-            let metaInfo = null;
-
-            if (imdbId) {
-                tmdbId = await getTmdbId(imdbId, tvType);
-
-                if (tmdbId) {
-                    logoUrl = `${METAHUB_LOGO}/${imdbId}/img`;
-
-                    // Get TMDB credits
-                    const credits = await getTmdbCredits(tmdbId, tvType);
-                    if (credits) {
-                        const creditsJson = JSON.stringify({ cast: credits.cast || [] });
-                        castList = parseCredits(creditsJson);
-                    }
-
-                    // Get Cinemeta metadata
-                    metaInfo = await getCinemetaMeta(imdbId, tvType);
-                }
-            }
-
-            // Build description
-            let description = metaInfo?.description || descriptions;
-            if (audioLanguages) {
-                description = (description || '') + (description ? ' - ' : '') + 'Audio: ' + audioLanguages;
-            }
-
-            // Extract genre/tags
-            const tags = metaInfo?.genres || [];
-
-            // Extract content rating
-            const contentRating = metaInfo?.appExtras?.certification || null;
-
-            // Score
-            const score = metaInfo?.imdbRating
-                ? parseFloat(metaInfo.imdbRating)
-                : null;
-
-            // Parse PlayerJS for stream data
-            const playerScripts = doc.querySelectorAll('script');
-            let playerData = null;
-
-            for (const script of playerScripts) {
-                const data = script.textContent || '';
-                if (data.includes('atob')) {
-                    // Found player script, decode
-                    const b64Match = data.match(/atob\("([^"]+)"\)/);
-                    if (b64Match) {
-                        try {
-                            const decoded = atob(b64Match[1]);
-                            const playerjsMatch = decoded.match(/new Playerjs\((.+)\);?$/);
-                            if (playerjsMatch) {
-                                playerData = JSON.parse(playerjsMatch[1]);
-                                break;
-                            }
-                        } catch (e) {
-                            // Continue trying
-                        }
-                    }
-                }
-            }
-
-            if (!playerData) {
-                return cb({
-                    success: false,
-                    errorCode: 'PARSE_ERROR',
-                    message: 'PlayerJS not found; only torrent links available'
-                });
-            }
-
-            // Parse file data (handle various formats)
-            let fileArray = playerData.file;
-
-            if (typeof fileArray === 'string') {
-                fileArray = fileArray.trim();
-                if (fileArray.startsWith('[') && fileArray.endsWith(']')) {
-                    fileArray = JSON.parse(fileArray);
-                } else if (fileArray.startsWith('{') && fileArray.endsWith('}')) {
-                    fileArray = [JSON.parse(fileArray)];
-                } else if (fileArray) {
-                    fileArray = [{ file: fileArray }];
-                } else {
-                    fileArray = [];
-                }
-            }
-
-            // Episode metadata map from Cinemeta
-            const epMetaMap = {};
-            if (metaInfo?.videos) {
-                for (const v of metaInfo.videos) {
-                    if (v.season && v.episode) {
-                        const key = `${v.season}:${v.episode}`;
-                        epMetaMap[key] = {
-                            name: v.name || v.title,
-                            overview: v.overview,
-                            thumbnail: v.thumbnail,
-                            released: v.released
-                        };
-                    }
-                }
-            }
-
-            // Parse subtitle tracks
-            const subtitle = playerData.subtitle ||
-                (fileArray[0]?.subtitle) || null;
-            const subtitleTracks = parseSubtitles(subtitle);
-
-            // Build episodes
-            const episodes = [];
-            const isSingleFile = !fileArray[0]?.folder;
-
-            if (isTvSeries) {
-                // TV Series: parse seasons and episodes
-                const seasonRegex = /Season\s*(\d+)/i;
-                const episodeRegex = /Episode\s*(\d+)/i;
-
-                for (let i = 0; i < fileArray.length; i++) {
-                    const seasonObj = fileArray[i];
-                    const seasonTitle = seasonObj.title || '';
-                    const seasonMatch = seasonTitle.match(seasonRegex);
-                    const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : (i + 1);
-
-                    const folders = seasonObj.folder || [];
-
-                    for (let j = 0; j < folders.length; j++) {
-                        const epObj = folders[j];
-                        const epTitle = epObj.title || '';
-                        const epMatch = epTitle.match(episodeRegex);
-                        const epNum = epMatch ? parseInt(epMatch[1]) : (j + 1);
-
-                        // Collect stream URLs
-                        const streamUrls = [];
-                        if (epObj.file) streamUrls.push(epObj.file);
-                        if (epObj.folder) {
-                            for (const source of epObj.folder) {
-                                if (source.file) streamUrls.push(source.file);
-                            }
-                        }
-
-                        if (streamUrls.length === 0) continue;
-
-                        // Episode metadata
-                        const metaKey = `${seasonNum}:${epNum}`;
-                        const epMeta = epMetaMap[metaKey] || {};
-
-                        // Parse episode subtitles
-                        const epSubtitles = parseSubtitles(epObj.subtitle);
-
-                        const episodeData = {
-                            streams: streamUrls,
-                            subtitleTracks: [...subtitleTracks, ...epSubtitles]
-                        };
-
-                        episodes.push(new Episode({
-                            name: epMeta.name || `S${seasonNum}E${epNum}`,
-                            url: JSON.stringify(episodeData),
-                            season: seasonNum,
-                            episode: epNum,
-                            description: epMeta.overview || null,
-                            posterUrl: epMeta.thumbnail || poster,
-                            airDate: epMeta.released || null
-                        }));
-                    }
-                }
-            } else {
-                // Movie: single file or array of files
-                const streamUrls = [];
-
-                if (isSingleFile && fileArray[0]?.file) {
-                    streamUrls.push(fileArray[0].file);
-                } else {
-                    for (const obj of fileArray) {
-                        if (obj.file) streamUrls.push(obj.file);
-                    }
-                }
-
-                if (streamUrls.length === 0) {
-                    return cb({
-                        success: false,
-                        errorCode: 'PARSE_ERROR',
-                        message: 'No stream URLs found'
-                    });
-                }
-
-                const movieData = {
-                    streams: streamUrls,
-                    subtitleTracks: subtitleTracks
-                };
-
-                episodes.push(new Episode({
-                    name: title,
-                    url: JSON.stringify(movieData),
-                    season: 1,
-                    episode: 1,
-                    posterUrl: poster
-                }));
-            }
-
-            // Build result
-            const result = new MultimediaItem({
-                title: metaInfo?.name || title,
-                url: url,
-                posterUrl: poster,
-                bannerUrl: metaInfo?.background || bgposter,
-                logoUrl: logoUrl,
-                type: tvType,
-                year: year || (metaInfo?.year ? parseInt(metaInfo.year) : null),
-                score: score,
-                description: description,
-                tags: tags,
-                cast: castList,
-                contentRating: contentRating,
-                episodes: episodes,
-                recommendations: recommendations
-            });
-
-            cb({ success: true, data: result });
-        } catch (e) {
-            console.error('load error:', e);
-            cb({ success: false, errorCode: 'LOAD_ERROR', message: e.message });
-        }
-    }
-
-    // =========================================================================
-    // LOAD STREAMS (loadStreams)
-    // =========================================================================
-
-    async function loadStreams(data, cb) {
+      let meta = null;
+      if (imdbId) {
         try {
-            const obj = typeof data === 'string' ? JSON.parse(data) : data;
-            const streams = [];
+          const metaUrl = `${CINEMETA_URL}/${type === "series" ? "series" : "movie"}/${imdbId}.json`;
+          const metaRes = await http_get(metaUrl, {});
+          if (metaRes.body && metaRes.body.trim().startsWith("{")) {
+            const parsed = safeJsonParse(metaRes.body);
+            meta = parsed ? parsed.meta : null;
+          }
+        } catch {}
+      }
 
-            // Extract subtitle tracks if present
-            if (obj.subtitleTracks && Array.isArray(obj.subtitleTracks)) {
-                // Subtitles are handled by the app automatically
-                // No need to include in StreamResult unless explicitly required
-            }
+      let description = meta && meta.description ? meta.description : about;
+      if (audioLangs) description = description ? `${description} - Audio: ${audioLangs}` : `Audio: ${audioLangs}`;
 
-            // Get stream URLs
-            const streamUrls = obj.streams || [];
+      const background = (meta && meta.background) || bgposter || poster;
+      const genres = meta && meta.genres ? meta.genres : [];
 
-            if (streamUrls.length === 0 && obj.streamUrl) {
-                streamUrls.push(obj.streamUrl);
-            }
+      const player = parsePlayerJs(doc);
+      if (!player) throw new Error("PLAYERJS_NOT_FOUND");
+      const built = buildEpisodes(player, meta, type);
 
-            if (streamUrls.length === 0) {
-                return cb({ success: false, errorCode: 'STREAM_ERROR', message: 'No streams found' });
-            }
+      const item = new MultimediaItem({
+        title: (meta && meta.name) ? meta.name : title,
+        url,
+        posterUrl: (meta && meta.poster) ? meta.poster : poster,
+        bannerUrl: background,
+        description,
+        type,
+        year: year || (meta && meta.year ? parseInt(meta.year) : undefined),
+        tags: genres,
+        episodes: built.episodes
+      });
 
-            // Create StreamResult for each URL
-            for (const url of streamUrls) {
-                const quality = extractQuality(url);
-                streams.push(new StreamResult({
-                    url: url,
-                    quality: quality ? `${quality}p` : 'Unknown',
-                    headers: {
-                        'Referer': BASE_URL + '/'
-                    }
-                }));
-            }
+      if (imdbId) item.imdbId = imdbId;
+      if (tmdbId) item.tmdbId = String(tmdbId);
+      if (imdbId) item.logoUrl = `${LOGO_BASE}/${imdbId}/img`;
+      if (meta && meta.imdbRating) item.score = parseFloat(meta.imdbRating);
+      if (meta && meta.app_extras && meta.app_extras.certification) item.contentRating = meta.app_extras.certification;
+      if (cast.length) item.cast = cast;
+      if (recommendations.length) item.recommendations = recommendations;
+      if (trailer) item.trailers = [new Trailer({ name: "Trailer", url: trailer })];
 
-            cb({ success: true, data: streams });
-        } catch (e) {
-            console.error('loadStreams error:', e);
-            cb({ success: false, errorCode: 'STREAM_ERROR', message: e.message });
-        }
+      if (type === "movie") {
+        const epUrl = built.movieData || JSON.stringify({ streamUrl: "", subtitleTracks: [] });
+        item.episodes = [new Episode({ name: "Full Movie", url: epUrl, season: 1, episode: 1, posterUrl: item.posterUrl })];
+      }
+
+      cb({ success: true, data: item });
+    } catch (e) {
+      cb({ success: false, errorCode: "LOAD_ERROR", message: e.message });
     }
+  }
 
-    // =========================================================================
-    // EXPORTS
-    // =========================================================================
+  async function loadStreams(data, cb) {
+    try {
+      const payload = safeJsonParse(data) || {};
+      const subtitles = Array.isArray(payload.subtitleTracks)
+        ? payload.subtitleTracks.map(s => ({ language: s.language, url: s.subtitleUrl }))
+        : [];
 
-    globalThis.getHome = getHome;
-    globalThis.search = search;
-    globalThis.load = load;
-    globalThis.loadStreams = loadStreams;
+      const urls = [];
+      if (Array.isArray(payload.streams)) urls.push(...payload.streams.filter(Boolean));
+      if (!urls.length && payload.streamUrl) urls.push(payload.streamUrl);
 
+      const results = urls.map(u => new StreamResult({
+        url: u,
+        source: `CinemaCity ${extractQuality(u)}`,
+        quality: extractQuality(u),
+        headers: { Referer: BASE_URL() },
+        subtitles
+      }));
+
+      cb({ success: true, data: results });
+    } catch (e) {
+      cb({ success: false, errorCode: "STREAM_ERROR", message: e.message });
+    }
+  }
+
+  globalThis.getHome = getHome;
+  globalThis.search = search;
+  globalThis.load = load;
+  globalThis.loadStreams = loadStreams;
 })();
