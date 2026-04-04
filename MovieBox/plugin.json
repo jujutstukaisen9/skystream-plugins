@@ -1,10 +1,16 @@
 {
-  "packageName": "com.moviebox.provider",
+  "packageName": "com.cncverse.moviebox",
   "name": "MovieBox",
-  "version": 1,
+  "version": 13,
   "baseUrl": "https://api3.aoneroom.com",
-  "description": "Stream Movies, TV Series, Anime and more",
-  "authors": ["MovieBox"],
-  "languages": ["hi", "en"],
-  "categories": ["Movie", "TvSeries", "Anime"]
+  "description": "MovieBox provider — Bollywood, Hollywood, South Indian, Anime, K-Drama, and more. Multi-audio & subtitle support.",
+  "authors": ["NivinCNC", "CNCVerse"],
+  "language": "hi",
+  "supportedTypes": ["movie", "series", "anime"],
+  "iconUrl": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/master/MovieBoxProvider/icon.png",
+  "repositoryUrl": "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension",
+  "hasHomePage": true,
+  "hasChromecast": false,
+  "requiresLogin": false,
+  "isNsfw": false
 }
