@@ -1,0 +1,10 @@
+{
+  "packageName": "dev.phisher.multimovies",
+  "name": "MultiMovies",
+  "version": 1,
+  "baseUrl": "https://multimovies.autos",
+  "description": "MultiMovies - Bollywood, Hollywood, South Indian Movies and TV Shows",
+  "authors": ["phisher98"],
+  "languages": ["en", "hi"],
+  "categories": ["Movie", "TvSeries", "Anime"]
+}
