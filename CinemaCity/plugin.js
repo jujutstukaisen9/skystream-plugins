@@ -89,16 +89,39 @@
   }
 
   function toSearchResult(el) {
-    const a = el && el.querySelector ? el.querySelector("a") : null;
-    if (!a) return null;
-    const titleRaw = text(a) || attr(a, "title");
-    const title = (titleRaw || "").split("(")[0].trim() || "Untitled";
-    const href = absUrl(attr(a, "href"));
-    let poster = "";
-    const posterEl = el.querySelector("div.dar-short_bg a") || el.querySelector("img");
-    if (posterEl) {
-      poster = absUrl(attr(posterEl, "href") || attr(posterEl, "src"));
+    if (!el) return null;
+    if (!el.querySelectorAll) {
+      const a = el.querySelector ? el.querySelector("a") : null;
+      if (!a) return null;
+      const titleRaw = text(a) || attr(a, "title");
+      const title = (titleRaw || "").split("(")[0].trim() || "Untitled";
+      const href = absUrl(attr(a, "href"));
+      const posterEl = el.querySelector && (el.querySelector("img") || el.querySelector("div.dar-short_bg a"));
+      const poster = posterEl ? absUrl(attr(posterEl, "src") || attr(posterEl, "href")) : "";
+      const type = href.includes("/tv-series/") ? "series" : "movie";
+      return new MultimediaItem({ title, url: href, posterUrl: poster, type });
     }
+
+    const anchors = Array.from(el.querySelectorAll("a"));
+    const titleLink =
+      el.querySelector("a.e-nowrap") ||
+      anchors.find(a => (a.textContent || "").trim().length > 2) ||
+      anchors[anchors.length - 1];
+    if (!titleLink) return null;
+    const titleRaw = text(titleLink) || attr(titleLink, "title");
+    const title = (titleRaw || "").split("(")[0].trim() || "Untitled";
+    const href = absUrl(attr(titleLink, "href"));
+
+    let poster = "";
+    const posterEl = el.querySelector("div.dar-short_bg img") || el.querySelector("img");
+    if (posterEl) {
+      poster = absUrl(attr(posterEl, "src") || attr(posterEl, "data-src") || attr(posterEl, "data-lazy"));
+    }
+    if (!poster) {
+      const coverLink = el.querySelector("div.dar-short_bg a");
+      if (coverLink) poster = absUrl(attr(coverLink, "href"));
+    }
+
     const scoreTxt = text(el.querySelector("span.rating-color"));
     let qualityTxt = text(el.querySelector("div.dar-short_bg.e-cover > div span:nth-child(2) > a"));
     if (!qualityTxt) qualityTxt = text(el.querySelector("div.dar-short_bg.e-cover > div > span"));
@@ -120,12 +143,12 @@
     return "";
   }
 
-  function parsePlayerJs(doc) {
+  function parsePlayerJs(doc, rawHtml) {
     const scripts = doc.querySelectorAll ? Array.from(doc.querySelectorAll("script")) : [];
     for (const s of scripts) {
       const textContent = (s.textContent || s.innerHTML || s.data || "");
       if (!textContent.includes("atob(")) continue;
-      const match = textContent.match(/atob\((['\"])(.*?)\1\)/);
+      const match = textContent.match(/atob\((['"])(.*?)\1\)/);
       if (!match) continue;
       const decoded = base64Decode(match[2]);
       const start = decoded.indexOf("new Playerjs(");
@@ -135,6 +158,21 @@
       const jsonText = (end === -1 ? after : after.slice(0, end)).trim();
       const player = safeJsonParse(jsonText);
       if (player) return player;
+    }
+
+    if (typeof rawHtml === "string") {
+      const regex = /atob\("([^"]+)"\)/g;
+      let m;
+      while ((m = regex.exec(rawHtml)) !== null) {
+        const decoded = base64Decode(m[1]);
+        const start = decoded.indexOf("new Playerjs(");
+        if (start === -1) continue;
+        const after = decoded.slice(start + "new Playerjs(".length);
+        const end = after.lastIndexOf(");");
+        const jsonText = (end === -1 ? after : after.slice(0, end)).trim();
+        const player = safeJsonParse(jsonText);
+        if (player) return player;
+      }
     }
     return null;
   }
@@ -257,9 +295,9 @@
       const res = await http_get(url, DEFAULT_HEADERS);
       const doc = await parseHtml(res.body);
 
-      const ogTitle = attr(doc.querySelector("meta[property='og:title']"), "content");
+      const ogTitle = attr(doc.querySelector("meta[property='og:title']"), "content") || (res.body.match(/<title>([^<]+)<\/title>/i) || [])[1] || "";
       const title = (ogTitle || "").split("(")[0].trim() || "Unknown";
-      const poster = attr(doc.querySelector("meta[property='og:image']"), "content");
+      const poster = attr(doc.querySelector("meta[property='og:image']"), "content") || (res.body.match(/property=['\"]og:image['\"]\\s+content=['\"]([^'\"]+)['\"]/i) || [])[1] || "";
       const bgposter = attr(doc.querySelector("div.dar-full_bg a"), "href");
       const trailer = attr(doc.querySelector("div.dar-full_bg.e-cover > div"), "data-vbg");
       const about = text(doc.querySelector("#about div.ta-full_text1"));
@@ -335,9 +373,8 @@
       const background = (meta && meta.background) || bgposter || poster;
       const genres = meta && meta.genres ? meta.genres : [];
 
-      const player = parsePlayerJs(doc);
-      if (!player) throw new Error("PLAYERJS_NOT_FOUND");
-      const built = buildEpisodes(player, meta, type);
+      const player = parsePlayerJs(doc, res.body);
+      const built = player ? buildEpisodes(player, meta, type) : { episodes: [], movieData: null };
 
       const item = new MultimediaItem({
         title: (meta && meta.name) ? meta.name : title,
@@ -381,6 +418,11 @@
       const urls = [];
       if (Array.isArray(payload.streams)) urls.push(...payload.streams.filter(Boolean));
       if (!urls.length && payload.streamUrl) urls.push(payload.streamUrl);
+
+      if (!urls.length) {
+        cb({ success: false, errorCode: "NO_STREAMS", message: "No stream URLs available" });
+        return;
+      }
 
       const results = urls.map(u => new StreamResult({
         url: u,
