@@ -1,3 +1,7 @@
+/**
+ * DudeFilms SkyStream Plugin
+ * Ported from CloudStream Kotlin Provider
+ */
 (function() {
     const MAIN_URL = manifest.baseUrl;
     const CINEMETA_URL = "https://v3-cinemeta.strem.io/meta";
@@ -80,9 +84,9 @@
             
             // Get poster - try multiple patterns
             let poster = "";
-            const pm = item.match(/data-src="([^"]+)"/) || 
-                      item.match(/src="([^"]+)"/) ||
-                      item.match(/data-lazy-src="([^"]+)"/);
+            const pm = item.match(/data-src=["']([^"']+)["']/) || 
+                      item.match(/src=["']([^"']+)["']/) ||
+                      item.match(/data-lazy-src=["']([^"']+)["']/);
             if (pm) poster = fixUrl(pm[1]);
             
             // Get title
@@ -352,15 +356,47 @@
                 title = tm[1].replace(/<[^>]+>/g, "").trim();
             }
             
-            // Get poster from meta tag (most reliable)
+            // Get poster - try multiple patterns
             let poster = "";
-            const pm = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
+            
+            // Pattern 1: og:image meta tag (handle both single and double quotes)
+            const pm = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
             if (pm) poster = pm[1];
             
-            // Fallback poster patterns
+            // Pattern 2: og:image with different attribute order
             if (!poster) {
-                const fp = html.match(/<img[^>]*class="[^"]*poster[^"]*"[^>]*src="([^"]+)"/);
-                if (fp) poster = fixUrl(fp[1]);
+                const pm2 = html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+                if (pm2) poster = pm2[1];
+            }
+            
+            // Pattern 3: featured image
+            if (!poster) {
+                const fm = html.match(/<img[^>]*class=["'][^"]*featured[^"]*["'][^>]*src=["']([^"']+)["']/i);
+                if (fm) poster = fixUrl(fm[1]);
+            }
+            
+            // Pattern 4: poster class
+            if (!poster) {
+                const pcm = html.match(/<img[^>]*class=["'][^"]*poster[^"]*["'][^>]*src=["']([^"']+)["']/i);
+                if (pcm) poster = fixUrl(pcm[1]);
+            }
+            
+            // Pattern 5: data-src lazy loading
+            if (!poster) {
+                const dm = html.match(/<img[^>]*data-src=["']([^"']+)["']/i);
+                if (dm) poster = fixUrl(dm[1]);
+            }
+            
+            // Pattern 6: entry-content img
+            if (!poster) {
+                const em = html.match(/<div[^>]*class=["'][^"]*entry-content[^"]*["'][^>]*>[\s\S]*?<img[^>]*src=["']([^"']+)["']/i);
+                if (em) poster = fixUrl(em[1]);
+            }
+            
+            // Pattern 7: any image with wp-content (WordPress uploads)
+            if (!poster) {
+                const wm = html.match(/src=["'](https?:\/\/[^"']*wp-content[^"']*\.(?:jpg|jpeg|png|webp))["']/i);
+                if (wm) poster = wm[1];
             }
             
             // Get description
