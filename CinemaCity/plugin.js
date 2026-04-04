@@ -1,7 +1,5 @@
 (function () {
-  /**
-   * @type {import('@skystream/sdk').Manifest}
-   */
+  // ------------ Config / Constants ------------
   const BASE_URL = () => (typeof manifest !== "undefined" && manifest.baseUrl) ? manifest.baseUrl : "https://cinemacity.cc";
 
   const TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
@@ -9,13 +7,17 @@
   const CINEMETA_URL = "https://v3-cinemeta.strem.io/meta";
   const LOGO_BASE = "https://live.metahub.space/logo/medium";
 
+  const USER_LOGIN = "wyatt545";
+  const USER_PASSWORD = "wyatt559021@mailtion.xyz";
+
   const DEFAULT_HEADERS = {
     "Cookie": base64Decode("ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs="),
     "User-Agent": "Mozilla/5.0"
   };
 
-  // ------------------------ helpers ------------------------
+  let loggedIn = false;
 
+  // ------------ Helpers ------------
   function base64Decode(str) {
     if (!str) return "";
     if (typeof atob === "function") return atob(str);
@@ -39,11 +41,7 @@
   }
 
   function safeJsonParse(str) {
-    try {
-      return JSON.parse(str);
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(str); } catch { return null; }
   }
 
   async function _fetch(url, extraHeaders = {}) {
@@ -51,6 +49,29 @@
     const res = await http_get(url, headers);
     const html = res && (res.body || res.data || "");
     return { html, res };
+  }
+
+  function mergeCookies(existing, setCookieHeader) {
+    if (!setCookieHeader) return existing || "";
+    const parts = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+    const newCookies = parts.map(c => c.split(";")[0]).filter(Boolean).join("; ");
+    return [existing || "", newCookies].filter(Boolean).join("; ");
+  }
+
+  async function loginIfNeeded() {
+    if (loggedIn) return;
+    if (typeof http_post !== "function") return; // runtime may not support POST; skip gracefully
+    try {
+      const data = `login=${encodeURIComponent(USER_LOGIN)}&password=${encodeURIComponent(USER_PASSWORD)}&remember=1&submit=Login`;
+      const res = await http_post(`${BASE_URL()}/`, { ...DEFAULT_HEADERS, "Content-Type": "application/x-www-form-urlencoded" }, data);
+      const setCookie = res && (res.headers?.["set-cookie"] || res.headers?.["Set-Cookie"]);
+      if (setCookie) {
+        DEFAULT_HEADERS.Cookie = mergeCookies(DEFAULT_HEADERS.Cookie, setCookie);
+      }
+      loggedIn = true;
+    } catch (_) {
+      // ignore login failures; continue anonymously
+    }
   }
 
   function parseCredits(jsonText) {
@@ -87,8 +108,7 @@
     return "Auto";
   }
 
-  // ------------------------ parsing helpers ------------------------
-
+  // ------------ Parsers ------------
   function toSearchResult(el) {
     if (!el) return null;
     if (!el.querySelectorAll) {
@@ -184,7 +204,7 @@
     if (typeof raw === "string") {
       const v = raw.trim();
       if (!v) return [];
-      if ((v.startsWith("[") && v.endsWith("]")) || (v.startsWith("{") && v.endsWith("}"))) {
+      if ((v.startsWith("[" ) && v.endsWith("]")) || (v.startsWith("{") && v.endsWith("}"))) {
         const parsed = safeJsonParse(v);
         if (Array.isArray(parsed)) return parsed;
         if (parsed && typeof parsed === "object") return [parsed];
@@ -199,9 +219,7 @@
     const episodeMetaMap = {};
     const videos = meta && Array.isArray(meta.videos) ? meta.videos : [];
     for (const v of videos) {
-      if (v.season != null && v.episode != null) {
-        episodeMetaMap[`${v.season}:${v.episode}`] = v;
-      }
+      if (v.season != null && v.episode != null) episodeMetaMap[`${v.season}:${v.episode}`] = v;
     }
 
     const episodes = [];
@@ -211,9 +229,7 @@
     if (!isSeries) {
       const first = fileArray[0] || {};
       const streamUrl = typeof first.file === "string" ? first.file : "";
-      const subtitleRaw = typeof (player && player.subtitle) === "string"
-        ? player.subtitle
-        : (typeof first.subtitle === "string" ? first.subtitle : "");
+      const subtitleRaw = typeof (player && player.subtitle) === "string" ? player.subtitle : (typeof first.subtitle === "string" ? first.subtitle : "");
       movieData = JSON.stringify({ streamUrl, subtitleTracks: parseSubtitles(subtitleRaw) });
       return { episodes, movieData };
     }
@@ -261,12 +277,20 @@
     return { episodes, movieData };
   }
 
-  // ------------------------ main functions ------------------------
-
+  // ------------ Core funcs ------------
   async function getHome(cb) {
     try {
+      const categories = [
+        { name: "Movies", path: "movies" },
+        { name: "TV Series", path: "tv-series" },
+        { name: "Anime", path: "xfsearch/genre/anime" },
+        { name: "Asian", path: "xfsearch/genre/asian" },
+        { name: "Animation", path: "xfsearch/genre/animation" },
+        { name: "Documentary", path: "xfsearch/genre/documentary" }
+      ];
+
       const out = {};
-      for (const cat of MAIN_CATEGORIES) {
+      for (const cat of categories) {
         const { html } = await _fetch(`${BASE_URL()}/${cat.path}`);
         const doc = await parseHtml(html);
         const cards = doc.querySelectorAll ? Array.from(doc.querySelectorAll("div.dar-short_item")) : [];
@@ -294,8 +318,9 @@
 
   async function load(url, cb) {
     try {
-      const { html } = await _fetch(url);
-      const doc = await parseHtml(html);
+      const first = await _fetch(url);
+      let html = first.html;
+      let doc = await parseHtml(html);
 
       const ogTitle = attr(doc.querySelector("meta[property='og:title']"), "content") || (html.match(/<title>([^<]+)<\/title>/i) || [])[1] || "";
       const title = (ogTitle || "").split("(")[0].trim() || "Unknown";
@@ -375,7 +400,16 @@
       const background = (meta && meta.background) || bgposter || poster;
       const genres = meta && meta.genres ? meta.genres : [];
 
-      const player = parsePlayerJs(doc, html);
+      // PlayerJS parse with optional login retry
+      let player = parsePlayerJs(doc, html);
+      if (!player || !player.file) {
+        await loginIfNeeded();
+        const retry = await _fetch(url);
+        html = retry.html;
+        doc = await parseHtml(html);
+        player = parsePlayerJs(doc, html);
+      }
+
       const built = player ? buildEpisodes(player, meta, type) : { episodes: [], movieData: null };
 
       const item = new MultimediaItem({
@@ -442,7 +476,7 @@
 
   const loadStreams = loadLinks;
 
-  // ------------------------ exports ------------------------
+  // ------------ Exports ------------
   globalThis.getHome = getHome;
   globalThis.search = search;
   globalThis.load = load;
