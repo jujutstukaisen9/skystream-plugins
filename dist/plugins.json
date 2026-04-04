@@ -1,23 +1,21 @@
 [
   {
-    "packageName": "com.cinemacity.skystream",
-    "name": "CinemaCity",
+    "packageName": "dev.skystream.dudefilms",
+    "name": "DudeFilms",
     "version": 1,
     "baseUrl": "https://cinemacity.cc",
-    "description": "CinemaCity - Movies and TV Series streaming provider with TMDB integration",
+    "description": "CinemaCity (DudeFilms) provider ported from CloudStream.",
     "authors": [
-      "Cinemacity Team",
-      "Ported by SkyStream"
+      "Codex"
     ],
     "languages": [
       "en"
     ],
     "categories": [
       "Movie",
-      "TvSeries",
-      "Anime"
+      "TV"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cinemacity.skystream.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.skystream.dudefilms.sky"
   },
   {
     "packageName": "dev.dudefilms.skystream",
