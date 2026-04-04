@@ -1,4 +1,7 @@
-(function() {
+(function () {
+  /**
+   * @type {import('@skystream/sdk').Manifest}
+   */
   const BASE_URL = () => (typeof manifest !== "undefined" && manifest.baseUrl) ? manifest.baseUrl : "https://cinemacity.cc";
 
   const TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
@@ -7,17 +10,11 @@
   const LOGO_BASE = "https://live.metahub.space/logo/medium";
 
   const DEFAULT_HEADERS = {
-    "Cookie": base64Decode("ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs=")
+    "Cookie": base64Decode("ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs="),
+    "User-Agent": "Mozilla/5.0"
   };
 
-  const MAIN_CATEGORIES = [
-    { name: "Movies", path: "movies" },
-    { name: "TV Series", path: "tv-series" },
-    { name: "Anime", path: "xfsearch/genre/anime" },
-    { name: "Asian", path: "xfsearch/genre/asian" },
-    { name: "Animation", path: "xfsearch/genre/animation" },
-    { name: "Documentary", path: "xfsearch/genre/documentary" }
-  ];
+  // ------------------------ helpers ------------------------
 
   function base64Decode(str) {
     if (!str) return "";
@@ -49,6 +46,13 @@
     }
   }
 
+  async function _fetch(url, extraHeaders = {}) {
+    const headers = { ...DEFAULT_HEADERS, ...extraHeaders };
+    const res = await http_get(url, headers);
+    const html = res && (res.body || res.data || "");
+    return { html, res };
+  }
+
   function parseCredits(jsonText) {
     if (!jsonText) return [];
     const root = safeJsonParse(jsonText);
@@ -66,9 +70,7 @@
     const parts = raw.split(",").map(p => p.trim()).filter(Boolean);
     for (const part of parts) {
       const match = part.match(/\[(.+?)\](https?:\/\/[^\s]+)/i);
-      if (match) {
-        out.push({ language: match[1], subtitleUrl: match[2] });
-      }
+      if (match) out.push({ language: match[1], subtitleUrl: match[2] });
     }
     return out;
   }
@@ -84,6 +86,8 @@
     if (u.includes("240")) return "240p";
     return "Auto";
   }
+
+  // ------------------------ parsing helpers ------------------------
 
   function toSearchResult(el) {
     if (!el) return null;
@@ -105,15 +109,14 @@
       anchors.find(a => (a.textContent || "").trim().length > 2) ||
       anchors[anchors.length - 1];
     if (!titleLink) return null;
+
     const titleRaw = text(titleLink) || attr(titleLink, "title");
     const title = (titleRaw || "").split("(")[0].trim() || "Untitled";
     const href = absUrl(attr(titleLink, "href"));
 
     let poster = "";
     const posterEl = el.querySelector("div.dar-short_bg img") || el.querySelector("img");
-    if (posterEl) {
-      poster = absUrl(attr(posterEl, "src") || attr(posterEl, "data-src") || attr(posterEl, "data-lazy"));
-    }
+    if (posterEl) poster = absUrl(attr(posterEl, "src") || attr(posterEl, "data-src") || attr(posterEl, "data-lazy"));
     if (!poster) {
       const coverLink = el.querySelector("div.dar-short_bg a");
       if (coverLink) poster = absUrl(attr(coverLink, "href"));
@@ -124,6 +127,7 @@
     if (!qualityTxt) qualityTxt = text(el.querySelector("div.dar-short_bg.e-cover > div > span"));
     const quality = qualityTxt && qualityTxt.toUpperCase().includes("TS") ? "TS" : "HD";
     const type = href.includes("/tv-series/") ? "series" : "movie";
+
     const item = new MultimediaItem({ title, url: href, posterUrl: poster, type });
     if (scoreTxt) item.score = parseFloat(scoreTxt) || scoreTxt;
     if (quality) item.quality = quality;
@@ -257,13 +261,14 @@
     return { episodes, movieData };
   }
 
+  // ------------------------ main functions ------------------------
+
   async function getHome(cb) {
     try {
       const out = {};
       for (const cat of MAIN_CATEGORIES) {
-        const url = `${BASE_URL()}/${cat.path}`;
-        const res = await http_get(url, DEFAULT_HEADERS);
-        const doc = await parseHtml(res.body);
+        const { html } = await _fetch(`${BASE_URL()}/${cat.path}`);
+        const doc = await parseHtml(html);
         const cards = doc.querySelectorAll ? Array.from(doc.querySelectorAll("div.dar-short_item")) : [];
         const items = cards.map(toSearchResult).filter(Boolean);
         if (items.length) out[cat.name] = items;
@@ -277,8 +282,8 @@
   async function search(query, cb) {
     try {
       const url = `${BASE_URL()}/index.php?do=search&subaction=search&search_start=1&full_search=0&story=${encodeURIComponent(query)}`;
-      const res = await http_get(url, DEFAULT_HEADERS);
-      const doc = await parseHtml(res.body);
+      const { html } = await _fetch(url);
+      const doc = await parseHtml(html);
       const cards = doc.querySelectorAll ? Array.from(doc.querySelectorAll("div.dar-short_item")) : [];
       const items = cards.map(toSearchResult).filter(Boolean);
       cb({ success: true, data: items });
@@ -289,12 +294,12 @@
 
   async function load(url, cb) {
     try {
-      const res = await http_get(url, DEFAULT_HEADERS);
-      const doc = await parseHtml(res.body);
+      const { html } = await _fetch(url);
+      const doc = await parseHtml(html);
 
-      const ogTitle = attr(doc.querySelector("meta[property='og:title']"), "content") || (res.body.match(/<title>([^<]+)<\/title>/i) || [])[1] || "";
+      const ogTitle = attr(doc.querySelector("meta[property='og:title']"), "content") || (html.match(/<title>([^<]+)<\/title>/i) || [])[1] || "";
       const title = (ogTitle || "").split("(")[0].trim() || "Unknown";
-      const poster = attr(doc.querySelector("meta[property='og:image']"), "content") || (res.body.match(/property=['\"]og:image['\"]\\s+content=['\"]([^'\"]+)['\"]/i) || [])[1] || "";
+      const poster = attr(doc.querySelector("meta[property='og:image']"), "content") || (html.match(/property=['"]og:image['"]\s+content=['"]([^'"]+)['"]/i) || [])[1] || "";
       const bgposter = attr(doc.querySelector("div.dar-full_bg a"), "href");
       const trailer = attr(doc.querySelector("div.dar-full_bg.e-cover > div"), "data-vbg");
       const about = text(doc.querySelector("#about div.ta-full_text1"));
@@ -370,7 +375,7 @@
       const background = (meta && meta.background) || bgposter || poster;
       const genres = meta && meta.genres ? meta.genres : [];
 
-      const player = parsePlayerJs(doc, res.body);
+      const player = parsePlayerJs(doc, html);
       const built = player ? buildEpisodes(player, meta, type) : { episodes: [], movieData: null };
 
       const item = new MultimediaItem({
@@ -437,6 +442,7 @@
 
   const loadStreams = loadLinks;
 
+  // ------------------------ exports ------------------------
   globalThis.getHome = getHome;
   globalThis.search = search;
   globalThis.load = load;
