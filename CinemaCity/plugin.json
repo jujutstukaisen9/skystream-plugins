@@ -1,0 +1,10 @@
+{
+  "packageName": "dev.skystream.dudefilms",
+  "name": "DudeFilms",
+  "version": 1,
+  "baseUrl": "https://cinemacity.cc",
+  "description": "CinemaCity (DudeFilms) provider ported from CloudStream.",
+  "authors": ["Codex"],
+  "languages": ["en"],
+  "categories": ["Movie", "TV"]
+}
