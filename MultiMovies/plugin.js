@@ -1,16 +1,17 @@
 (function() {
-    const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
+    const UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
 
     const BASE_HEADERS = {
         "User-Agent": UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
         "Referer": `${manifest.baseUrl}/`
     };
 
     const EXCLUDE_PATHS = [
         "/genre", "/country", "/negara", "/tahun", "/year", "/page/",
         "/privacy", "/dmca", "/faq", "/request", "/wp-",
-        "/author", "/category", "/tag", "/feed", "javascript:"
+        "/author", "/category", "/tag", "/feed", "javascript:", "/?s="
     ];
 
     function normalizeUrl(url, base) {
@@ -21,14 +22,6 @@
         if (/^https?:\/\//i.test(raw)) return raw;
         if (raw.startsWith("/")) return `${base}${raw}`;
         return `${base}/${raw}`;
-    }
-
-    function resolveUrl(base, next) {
-        try {
-            return new URL(String(next || ""), String(base || manifest.baseUrl)).toString();
-        } catch (_) {
-            return normalizeUrl(next, manifest.baseUrl);
-        }
     }
 
     function hostnameOf(url) {
@@ -86,19 +79,16 @@
     function isContentPath(url) {
         const path = pathOf(url);
         if (!path || path === "/") return false;
+        if (path === "/search" || path.startsWith("/search")) return false;
         return !EXCLUDE_PATHS.some((p) => path.includes(p));
     }
 
     function cleanTitle(raw) {
         let t = htmlDecode(String(raw || "")).replace(/\s+/g, " ").trim();
-        t = t.replace(/^(nonton|streaming)\s+(movie|series|film|donghua|anime)\s+/i, "");
-        t = t.replace(/^(nonton|streaming)\s+/i, "");
+        t = t.replace(/^(nonton|streaming|watch|download)\s+(movie|series|film|donghua|anime)\s+/i, "");
+        t = t.replace(/^(nonton|streaming|watch|download)\s+/i, "");
+        t = t.replace(/\s+\d{4}\s*$/, "").trim();
         return t.trim();
-    }
-
-    function fixImageQuality(url) {
-        if (!url) return "";
-        return url.replace(/-(\d+)x(\d+)\.(jpe?g|png|webp)$/i, ".$3");
     }
 
     function extractQuality(text) {
@@ -109,18 +99,8 @@
         if (t.includes("720") || t.includes("hd")) return "720p";
         if (t.includes("480") || t.includes("sd")) return "480p";
         if (t.includes("360") || t.includes("low")) return "360p";
-        if (t.includes("240") || t.includes("lowest")) return "240p";
-        if (t.includes("144") || t.includes("mobile")) return "144p";
-        if (t.includes("cam")) return "CAM";
+        if (t.includes("cam") || t.includes("hdcam")) return "CAM";
         return "Auto";
-    }
-
-    function normalizeSearchQuery(query) {
-        let q = String(query || "").trim();
-        try { q = decodeURIComponent(q); } catch (_) {}
-        q = q.replace(/\+/g, " ");
-        q = q.replace(/^["']|["']$/g, "");
-        return q.trim();
     }
 
     function uniqueByUrl(items) {
@@ -146,20 +126,47 @@
     function parseItemFromElement(el) {
         if (!el) return null;
         
-        const anchor = el.querySelector(".bsx a, a[title], a[href*='episode'], a[href*='season'], div.data > h3 > a");
-        const href = normalizeUrl(getAttr(anchor, "href"), manifest.baseUrl);
-        if (!href) return null;
-        if (!isContentPath(href)) return null;
-
+        let anchor = el.querySelector("a[href]");
+        let href = normalizeUrl(getAttr(anchor, "href"), manifest.baseUrl);
+        
+        if (!href) {
+            anchor = el.closest("a");
+            href = normalizeUrl(getAttr(anchor, "href"), manifest.baseUrl);
+        }
+        
+        if (!href || !href.includes("/") || href.includes("javascript")) return null;
+        
         const img = el.querySelector("img");
-        const title = cleanTitle(getAttr(anchor, "title") || textOf(el.querySelector(".tt")) || getAttr(img, "alt") || textOf(el.querySelector("h3")));
-        if (!title || title === "Unknown") return null;
+        let title = getAttr(anchor, "title") || textOf(el.querySelector("h3, .title, .name, .entry-title")) || getAttr(img, "alt");
+        
+        if (!title) {
+            const titleEl = el.querySelector(".title, .name, h3, a[title]");
+            title = textOf(titleEl);
+        }
+        
+        title = cleanTitle(title);
+        if (!title || title === "Unknown" || title.length < 2) return null;
 
-        const posterUrl = fixImageQuality(normalizeUrl(getAttr(img, "src", "data-src"), manifest.baseUrl));
+        let posterUrl = "";
+        if (img) {
+            posterUrl = normalizeUrl(getAttr(img, "src", "data-src", "data-lazy-src"), manifest.baseUrl);
+        }
+        
+        if (!posterUrl) {
+            const posterEl = el.querySelector(".poster, .img, .thumbnail img");
+            posterUrl = normalizeUrl(getAttr(posterEl, "src", "data-src", "data-lazy-src"), manifest.baseUrl);
+        }
 
-        let type = "series";
-        const typeText = textOf(el.querySelector(".typez, .type, .status, .mepo"));
-        if (typeText.toLowerCase().includes("movie") || href.includes("/movie/")) type = "movie";
+        let type = "movie";
+        if (href.includes("/tvshows") || href.includes("/season") || href.includes("/episode")) {
+            type = "series";
+        }
+
+        const typeEl = el.querySelector(".type, .typez, .status, span");
+        const typeText = textOf(typeEl);
+        if (typeText.toLowerCase().includes("tv") || typeText.toLowerCase().includes("series")) {
+            type = "series";
+        }
 
         return new MultimediaItem({
             title,
@@ -182,9 +189,21 @@
                 }
                 const doc = await loadDoc(url);
                 
-                let items = Array.from(doc.querySelectorAll("div.listupd article, div.bsx, article, #archive-content > article, div.items > article"))
-                    .map(parseItemFromElement)
-                    .filter(Boolean);
+                let items = [];
+                
+                const articles = doc.querySelectorAll("article, .post, .item, .movie, .series, .result-item");
+                for (const article of articles) {
+                    const item = parseItemFromElement(article);
+                    if (item) items.push(item);
+                }
+                
+                if (items.length === 0) {
+                    const listItems = doc.querySelectorAll(".listupd article, div.bsx, #archive-content > article, div.items > article, ul.items-list li");
+                    for (const li of listItems) {
+                        const item = parseItemFromElement(li);
+                        if (item) items.push(item);
+                    }
+                }
 
                 if (items.length === 0 && p > 1) break;
                 all.push(...items);
@@ -200,23 +219,17 @@
     async function getHome(cb) {
         try {
             const sections = [
-                { name: "Trending", path: "trending/" },
+                { name: "Trending", path: "" },
                 { name: "Bollywood Movies", path: "genre/bollywood-movies/" },
                 { name: "Hollywood Movies", path: "genre/hollywood/" },
                 { name: "South Indian Movies", path: "genre/south-indian/" },
                 { name: "Punjabi Movies", path: "genre/punjabi/" },
                 { name: "Amazon Prime", path: "genre/amazon-prime/" },
                 { name: "Disney Hotstar", path: "genre/disney-hotstar/" },
-                { name: "Jio OTT", path: "genre/jio-ott/" },
                 { name: "Netflix", path: "genre/netflix/" },
-                { name: "Sony Liv", path: "genre/sony-liv/" },
                 { name: "KDrama", path: "genre/k-drama/" },
-                { name: "Zee5", path: "genre/zee-5/" },
                 { name: "Anime Series", path: "genre/anime-hindi/" },
-                { name: "Anime Movies", path: "genre/anime-movies/" },
-                { name: "Cartoon Network", path: "genre/cartoon-network/" },
-                { name: "Disney Channel", path: "genre/disney-channel/" },
-                { name: "Hungama", path: "genre/hungama/" }
+                { name: "Anime Movies", path: "genre/anime-movies/" }
             ];
 
             const data = {};
@@ -237,20 +250,25 @@
 
     async function search(query, cb) {
         try {
-            const normalizedQuery = normalizeSearchQuery(query);
-            const encoded = encodeURIComponent(normalizedQuery);
+            const encoded = encodeURIComponent(query.trim());
             const url = `${manifest.baseUrl}/?s=${encoded}`;
 
             const doc = await loadDoc(url);
-            let items = Array.from(doc.querySelectorAll("div.result-item, div.listupd article, div.bsx, article"))
-                .map(parseItemFromElement)
-                .filter(Boolean);
+            let items = [];
+
+            const resultItems = doc.querySelectorAll(".result-item, article, .post, .item");
+            for (const item of resultItems) {
+                const parsed = parseItemFromElement(item);
+                if (parsed) items.push(parsed);
+            }
 
             if (items.length === 0) {
-                const altDoc = await loadDoc(`${manifest.baseUrl}/page/1/?s=${encoded}`);
-                items = Array.from(altDoc.querySelectorAll("div.result-item, div.listupd article, div.bsx"))
-                    .map(parseItemFromElement)
-                    .filter(Boolean);
+                const altDoc = await loadDoc(`${manifest.baseUrl}/search/${encoded}/`);
+                const altItems = altDoc.querySelectorAll(".result-item, article, .post, .item");
+                for (const item of altItems) {
+                    const parsed = parseItemFromElement(item);
+                    if (parsed) items.push(parsed);
+                }
             }
 
             cb({ success: true, data: uniqueByUrl(items) });
@@ -263,82 +281,74 @@
         try {
             const doc = await loadDoc(url);
 
-            const titleL = textOf(doc.querySelector("div.sheader > div.data > h1, h1.entry-title, h1"));
-            const titleRegex = /(^.*\)\d*)/;
-            const titleMatch = titleRegex.exec(titleL);
-            const title = titleMatch ? titleMatch[1] : titleL;
+            const title = textOf(doc.querySelector("h1, .title, .entry-title")) || "Unknown";
+            const cleanTitle = title.replace(/\s*\d{4}\s*$/, "").trim();
 
-            const posterUrl = fixImageQuality(normalizeUrl(
-                getAttr(doc.querySelector("div.poster img, .ime img, meta[property='og:image']"), "src", "content"),
-                manifest.baseUrl
-            ));
+            const posterEl = doc.querySelector(".poster img, .ime img, img.poster, meta[property='og:image']");
+            const posterUrl = normalizeUrl(getAttr(posterEl, "src", "content"), manifest.baseUrl);
 
-            const bgposter = fixImageQuality(normalizeUrl(
-                getAttr(doc.querySelector("div.g-item a"), "href"),
-                manifest.baseUrl
-            ));
+            const bgEl = doc.querySelector(".g-item a, .backdrop a, .banner a");
+            const bgposter = normalizeUrl(getAttr(bgEl, "href"), manifest.baseUrl);
 
-            const description = textOf(doc.querySelector("#info div.wp-content p, div.entry-content p, .desc"));
-            const tags = Array.from(doc.querySelectorAll("div.sgeneros > a, .generos a")).map(a => textOf(a));
-            const yearStr = textOf(doc.querySelector("span.date"));
-            const year = yearStr ? parseInt(yearStr.split(",").pop()?.trim()) : null;
-            const rating = textOf(doc.querySelector("span.dt_rating_vgs, .rating"));
-            const durationStr = textOf(doc.querySelector("span.runtime"));
-            const duration = durationStr ? parseInt(durationStr.replace(/\s*Min\.\s*/i, "").trim()) : null;
+            const descEl = doc.querySelector(".description, .synopsis, #info, .entry-content p, .wp-content p");
+            const description = textOf(descEl);
 
-            const actors = Array.from(doc.querySelectorAll("div.person")).map(person => {
-                const name = textOf(person.querySelector("div.data > div.name > a"));
-                const image = getAttr(person.querySelector("div.img > a > img"), "src");
-                const role = textOf(person.querySelector("div.data > div.caracter"));
-                return new Actor({ name, image, role });
-            });
+            const yearEl = doc.querySelector(".date, .year, time, [itemprop='datePublished']");
+            const yearStr = textOf(yearEl);
+            const year = yearStr ? parseInt(yearStr.match(/\d{4}/)?.[0] || yearStr.split(",").pop()?.trim()) : null;
 
-            const recommendations = Array.from(doc.querySelectorAll("#dtw_content_related-2 article, .related article")).map(parseItemFromElement).filter(Boolean);
+            const ratingEl = doc.querySelector(".rating, .score, [itemprop='ratingValue'], .dt_rating_vgs");
+            const rating = textOf(ratingEl);
 
-            const isSeries = url.includes("tvshows") || doc.querySelector("#seasons ul.episodios");
-            const type = isSeries ? "series" : "movie";
+            const durationEl = doc.querySelector(".runtime, .duration, time[datetime]");
+            const durationStr = textOf(durationEl);
+            const duration = durationStr ? parseInt(durationStr.match(/\d+/)?.[0]) : null;
+
+            const tagsEl = doc.querySelectorAll(".genres, .generos, .tags, [itemprop='genre']");
+            const tags = Array.from(tagsEl).map(t => textOf(t)).filter(Boolean);
+
+            const isSeries = url.includes("tvshows") || url.includes("/season") || doc.querySelector("#seasons, .episodios, .eplister");
 
             let episodes = [];
             if (isSeries) {
-                const seasonElements = doc.querySelectorAll("#seasons ul.episodios, .eplister li");
+                const epItems = doc.querySelectorAll("#seasons ul.episodios li, .eplister li, .episodes li, .episode-item");
                 let epIndex = 0;
-                for (const seasonEl of seasonElements) {
-                    const epItems = seasonEl.querySelectorAll("li");
-                    for (const it of epItems) {
-                        const epUrl = getAttr(it.querySelector("div.episodiotitle > a"), "href");
-                        const epName = textOf(it.querySelector("div.episodiotitle > a"));
-                        const epPoster = getAttr(it.querySelector("div.imagen > img"), "src", "data-src");
-                        epIndex++;
-                        
-                        const seasonMatch = it.outerHTML.match(/season[\s-]*(\d+)/i) || [null, "1"];
-                        const epMatch = it.outerHTML.match(/episode[\s-]*(\d+)/i) || [null, String(epIndex)];
-                        
-                        episodes.push(new Episode({
-                            name: epName || `Episode ${epIndex}`,
-                            url: normalizeUrl(epUrl, manifest.baseUrl),
-                            season: parseInt(seasonMatch[1]) || 1,
-                            episode: parseInt(epMatch[1]) || epIndex,
-                            posterUrl: fixImageQuality(normalizeUrl(epPoster, manifest.baseUrl))
-                        }));
-                    }
+                for (const it of epItems) {
+                    const epUrl = getAttr(it.querySelector("a"), "href");
+                    const epName = textOf(it.querySelector("a, .title, .name"));
+                    epIndex++;
+                    
+                    episodes.push(new Episode({
+                        name: epName || `Episode ${epIndex}`,
+                        url: normalizeUrl(epUrl, manifest.baseUrl),
+                        season: 1,
+                        episode: epIndex,
+                        posterUrl
+                    }));
                 }
             }
 
+            const recommendations = [];
+            const recItems = doc.querySelectorAll(".related article, #dtw_content_related-2 article, .recommendations article");
+            for (const rec of recItems) {
+                const item = parseItemFromElement(rec);
+                if (item) recommendations.push(item);
+            }
+
             const item = new MultimediaItem({
-                title,
+                title: cleanTitle,
                 url,
                 posterUrl,
                 description,
                 type: isSeries ? "series" : "movie",
-                contentType: type,
+                contentType: isSeries ? "series" : "movie",
                 year,
                 score: rating ? parseFloat(rating) : null,
                 duration,
                 tags,
-                actors,
-                recommendations,
                 backgroundPosterUrl: bgposter || posterUrl,
-                episodes
+                episodes,
+                recommendations
             });
 
             cb({ success: true, data: item });
@@ -427,202 +437,6 @@
         return [];
     }
 
-    async function resolveVidHide(url, label = "VidHide") {
-        return resolveStreamWish(url, label);
-    }
-
-    async function resolveVidStack(url, label = "VidStack") {
-        return resolveStreamWish(url, label);
-    }
-
-    async function resolveGofile(url, label = "Gofile") {
-        try {
-            const idMatch = url.match(/\/(?:\?c=|d\/)([\da-zA-Z-]+)/);
-            if (!idMatch) return [];
-            const id = idMatch[1];
-
-            const tokenRes = await http_post("https://api.gofile.io/accounts", {
-                headers: { "User-Agent": UA }
-            });
-            const tokenData = JSON.parse(tokenRes.body || "{}");
-            const token = tokenData?.data?.token;
-            if (!token) return [];
-
-            const currentTimeSeconds = Math.floor(Date.now() / 1000);
-            const interval = String(Math.floor(currentTimeSeconds / 14400));
-            const secret = "gf2026x";
-            const message = [UA, "en-GB", token, interval, secret].join("::");
-            
-            const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(message));
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashedToken = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-
-            const headers = {
-                "User-Agent": UA,
-                "Authorization": `Bearer ${token}`,
-                "X-BL": "en-GB",
-                "X-Website-Token": hashedToken,
-                "Referer": "https://gofile.io/"
-            };
-
-            const contentsRes = await request(`https://api.gofile.io/contents/${id}?pageSize=1000`, headers);
-            const contentsData = JSON.parse(contentsRes.body || "{}");
-            const children = contentsData?.data?.children || {};
-
-            const results = [];
-            for (const file of Object.values(children)) {
-                if (file.type !== "file" || !file.link) continue;
-                const size = file.size || 0;
-                const sizeStr = size < 1024 * 1024 * 1024 
-                    ? `${(size / (1024 * 1024)).toFixed(2)} MB`
-                    : `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-                
-                const quality = extractQuality(file.name);
-                results.push(new StreamResult({
-                    url: file.link,
-                    quality,
-                    source: `[Gofile] ${file.name} [${sizeStr}]`,
-                    headers: { "Cookie": `accountToken=${token}` }
-                }));
-            }
-            return results;
-        } catch (_) {
-            return [];
-        }
-    }
-
-    async function resolveStreamcasthub(url, label = "StreamCastHub") {
-        try {
-            const id = url.substringAfter("/#");
-            if (!id) return [];
-            const m3u8 = `https://ss1.rackcloudservice.cyou/ic/${id}/master.txt`;
-            return [new StreamResult({
-                url: m3u8,
-                quality: "Auto",
-                source: label,
-                headers: { "Referer": url, "User-Agent": UA }
-            })];
-        } catch (_) {
-            return [];
-        }
-    }
-
-    async function loadStreams(url, cb) {
-        try {
-            const doc = await loadDoc(url);
-            const rawStreams = [];
-            const seenUrls = new Set();
-
-            const options = Array.from(doc.querySelectorAll("#playeroptionsul li, .mobius option, .mirror option, select option"));
-            for (const opt of options) {
-                const postId = getAttr(opt, "data-post");
-                const nume = getAttr(opt, "data-nume");
-                const typeVal = getAttr(opt, "data-type");
-                const val = getAttr(opt, "value");
-
-                if (postId && nume && !nume.includes("trailer")) {
-                    try {
-                        const embedHtml = await ajaxPost("doo_player_ajax", postId, nume, typeVal || "movie", url);
-                        const srcMatch = embedHtml.match(/SRC=["'](https?:[^"']+)["']/i) || embedHtml.match(/embed_url["\s:]+["']([^"']+)["']/);
-                        let link = srcMatch ? srcMatch[1] : val;
-                        
-                        if (link && !seenUrls.has(link)) {
-                            seenUrls.add(link);
-                            const streams = await resolvePlayerLink(link, textOf(opt) || "Server", url);
-                            rawStreams.push(...streams);
-                        }
-                    } catch (_) {}
-                } else if (val && val.length > 5 && !seenUrls.has(val)) {
-                    seenUrls.add(val);
-                    try {
-                        const streams = await resolvePlayerLink(val, textOf(opt) || "Server", url);
-                        rawStreams.push(...streams);
-                    } catch (_) {}
-                }
-            }
-
-            const iframes = Array.from(doc.querySelectorAll("iframe[src]"));
-            for (const ifr of iframes) {
-                const src = getAttr(ifr, "src");
-                if (src && !seenUrls.has(src) && !src.includes("about:blank")) {
-                    seenUrls.add(src);
-                    try {
-                        const streams = await resolvePlayerLink(src, "Embed", url);
-                        rawStreams.push(...streams);
-                    } catch (_) {}
-                }
-            }
-
-            const scripts = Array.from(doc.querySelectorAll("script")).map(s => s.textContent).join("\n");
-            const scriptRegex = /(?:file|src|source|video_url|play_url|hls)\s*[:=]\s*["']([^"']+?\.(?:m3u8|mp4)[^"']*?)["']/gi;
-            let match;
-            while ((match = scriptRegex.exec(scripts)) !== null) {
-                const u = normalizeUrl(match[1].replace(/\\/g, ""), manifest.baseUrl);
-                if (u && !seenUrls.has(u)) {
-                    seenUrls.add(u);
-                    rawStreams.push(new StreamResult({
-                        url: u,
-                        quality: "Auto",
-                        source: "Script",
-                        headers: { "Referer": url, "User-Agent": UA }
-                    }));
-                }
-            }
-
-            cb({ success: true, data: rawStreams });
-        } catch (e) {
-            cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
-        }
-    }
-
-    async function resolvePlayerLink(playerLink, label, referer = "") {
-        let link = playerLink || "";
-        if (!link || link.includes("about:blank")) return [];
-
-        if (!link.startsWith("http") && !link.startsWith("//") && link.length > 10) {
-            try {
-                const decoded = safeAtob(link);
-                if (decoded.includes("<iframe")) {
-                    const m = decoded.match(/src=["'](.*?)["']/);
-                    if (m) link = m[1];
-                } else if (decoded.startsWith("http") || decoded.startsWith("//")) {
-                    link = decoded;
-                }
-            } catch (_) {}
-        }
-
-        link = normalizeUrl(link, manifest.baseUrl);
-        if (!link.startsWith("http")) return [];
-
-        const host = hostnameOf(link);
-
-        if (host.includes("streamwish.com") || host.includes("streamwish") || host.includes("asnwish.com") || host.includes("cdnwish.com") || host.includes("strwish.com")) {
-            return await resolveStreamWish(link, label || "StreamWish");
-        }
-        if (host.includes("vidhide") || host.includes("vidhidepro") || host.includes("dhcplay")) {
-            return await resolveVidHide(link, label || "VidHide");
-        }
-        if (host.includes("vidstack") || host.includes("vidplay") || host.includes("streamhub")) {
-            return await resolveVidStack(link, label || "VidStack");
-        }
-        if (host.includes("gofile.io")) {
-            return await resolveGofile(link, label || "Gofile");
-        }
-        if (host.includes("streamcasthub")) {
-            return await resolveStreamcasthub(link, label || "StreamCastHub");
-        }
-        if (host.includes("gdmirrorbot") || host.includes("techinmind") || host.includes("iqsmartgames")) {
-            return await resolveGDMirror(link, label || "GDMirror");
-        }
-
-        return [new StreamResult({
-            url: link,
-            quality: "Auto",
-            source: label || "Player",
-            headers: { "Referer": referer || manifest.baseUrl + "/", "User-Agent": UA }
-        })];
-    }
-
     async function resolveGDMirror(url, label = "GDMirror") {
         try {
             const res = await request(url);
@@ -678,6 +492,153 @@
         } catch (_) {
             return [];
         }
+    }
+
+    async function loadStreams(url, cb) {
+        try {
+            const doc = await loadDoc(url);
+            const rawStreams = [];
+            const seenUrls = new Set();
+
+            const options = Array.from(doc.querySelectorAll("#playeroptionsul li, .player, select option, .server"));
+            for (const opt of options) {
+                const postId = getAttr(opt, "data-post");
+                const nume = getAttr(opt, "data-nume");
+                const typeVal = getAttr(opt, "data-type");
+                const val = getAttr(opt, "value");
+
+                if (postId && nume && !nume.includes("trailer")) {
+                    try {
+                        const embedHtml = await ajaxPost("doo_player_ajax", postId, nume, typeVal || "movie", url);
+                        const srcMatch = embedHtml.match(/SRC=["'](https?:[^"']+)["']/i) || embedHtml.match(/embed_url["\s:]+["']([^"']+)["']/);
+                        let link = srcMatch ? srcMatch[1] : val;
+                        
+                        if (link && !seenUrls.has(link)) {
+                            seenUrls.add(link);
+                            const streams = await resolvePlayerLink(link, textOf(opt) || "Server", url);
+                            rawStreams.push(...streams);
+                        }
+                    } catch (_) {}
+                } else if (val && val.length > 5 && !seenUrls.has(val)) {
+                    seenUrls.add(val);
+                    try {
+                        const streams = await resolvePlayerLink(val, textOf(opt) || "Server", url);
+                        rawStreams.push(...streams);
+                    } catch (_) {}
+                }
+            }
+
+            const links = doc.querySelectorAll("a[href*='gdmirror'], a[href*='streamwish'], a[href*='vidhide'], a[href*='vidstack'], a[href*='gofile']");
+            for (const link of links) {
+                const href = getAttr(link, "href");
+                if (href && !seenUrls.has(href)) {
+                    seenUrls.add(href);
+                    try {
+                        const streams = await resolvePlayerLink(href, textOf(link) || "Server", url);
+                        rawStreams.push(...streams);
+                    } catch (_) {}
+                }
+            }
+
+            const iframes = Array.from(doc.querySelectorAll("iframe[src]"));
+            for (const ifr of iframes) {
+                const src = getAttr(ifr, "src");
+                if (src && !seenUrls.has(src) && !src.includes("about:blank")) {
+                    seenUrls.add(src);
+                    try {
+                        const streams = await resolvePlayerLink(src, "Embed", url);
+                        rawStreams.push(...streams);
+                    } catch (_) {}
+                }
+            }
+
+            const scripts = Array.from(doc.querySelectorAll("script")).map(s => s.textContent).join("\n");
+            const scriptRegex = /(?:file|src|source|video_url|play_url|hls)\s*[:=]\s*["']([^"']+?\.(?:m3u8|mp4)[^"']*?)["']/gi;
+            let match;
+            while ((match = scriptRegex.exec(scripts)) !== null) {
+                const u = normalizeUrl(match[1].replace(/\\/g, ""), manifest.baseUrl);
+                if (u && !seenUrls.has(u)) {
+                    seenUrls.add(u);
+                    rawStreams.push(new StreamResult({
+                        url: u,
+                        quality: "Auto",
+                        source: "Script",
+                        headers: { "Referer": url, "User-Agent": UA }
+                    }));
+                }
+            }
+
+            if (rawStreams.length === 0) {
+                const pageHtml = doc.body?.innerHTML || "";
+                const gdmirrorMatch = pageHtml.match(/href=["']([^"']*gdmirror[^"']*)["']/i);
+                const directLinks = pageHtml.match(/https?:\/\/[^"'\s]*\.(m3u8|mp4)[^"'\s]*/gi);
+                
+                if (gdmirrorMatch) {
+                    const streams = await resolvePlayerLink(gdmirrorMatch[1], "GDMirror", url);
+                    rawStreams.push(...streams);
+                }
+                
+                if (directLinks) {
+                    for (const link of directLinks) {
+                        if (!seenUrls.has(link)) {
+                            seenUrls.add(link);
+                            rawStreams.push(new StreamResult({
+                                url: link,
+                                quality: extractQuality(link),
+                                source: "Direct",
+                                headers: { "Referer": url, "User-Agent": UA }
+                            }));
+                        }
+                    }
+                }
+            }
+
+            cb({ success: true, data: rawStreams });
+        } catch (e) {
+            cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
+        }
+    }
+
+    async function resolvePlayerLink(playerLink, label, referer = "") {
+        let link = playerLink || "";
+        if (!link || link.includes("about:blank")) return [];
+
+        if (!link.startsWith("http") && !link.startsWith("//") && link.length > 10) {
+            try {
+                const decoded = safeAtob(link);
+                if (decoded.includes("<iframe")) {
+                    const m = decoded.match(/src=["'](.*?)["']/);
+                    if (m) link = m[1];
+                } else if (decoded.startsWith("http") || decoded.startsWith("//")) {
+                    link = decoded;
+                }
+            } catch (_) {}
+        }
+
+        link = normalizeUrl(link, manifest.baseUrl);
+        if (!link.startsWith("http")) return [];
+
+        const host = hostnameOf(link);
+
+        if (host.includes("streamwish") || host.includes("asnwish") || host.includes("cdnwish") || host.includes("strwish")) {
+            return await resolveStreamWish(link, label || "StreamWish");
+        }
+        if (host.includes("gdmirror") || host.includes("techinmind") || host.includes("iqsmartgames")) {
+            return await resolveGDMirror(link, label || "GDMirror");
+        }
+        if (host.includes("vidhide") || host.includes("vidhidepro") || host.includes("dhcplay")) {
+            return await resolveStreamWish(link, label || "VidHide");
+        }
+        if (host.includes("vidstack") || host.includes("vidplay") || host.includes("streamhub")) {
+            return await resolveStreamWish(link, label || "VidStack");
+        }
+
+        return [new StreamResult({
+            url: link,
+            quality: "Auto",
+            source: label || "Player",
+            headers: { "Referer": referer || manifest.baseUrl + "/", "User-Agent": UA }
+        })];
     }
 
     globalThis.getHome = getHome;
