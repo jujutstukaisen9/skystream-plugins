@@ -1,12 +1,3 @@
-/**
- * SkyStream Plugin: Cinemacity
- *
- * Migration from CloudStream Kotlin Provider
- * Full feature parity implementation
- *
- * @author MiniMax Agent
- * @version 1.0.0
- */
 
 (function() {
     "use strict";
