@@ -1,21 +1,23 @@
 [
   {
-    "packageName": "dev.skystream.CinemaCity",
-    "name": "CinemaCity",
+    "packageName": "com.cinemacity.skystream",
+    "name": "cinemacity",
     "version": 1,
     "baseUrl": "https://cinemacity.cc",
-    "description": "CinemaCity (DudeFilms) provider ported from CloudStream.",
+    "description": "DudeFilms Provider - Bollywood, Hollywood, South Indian, Web Series and more",
     "authors": [
-      "Codex"
+      "DudeFilms Team"
     ],
     "languages": [
+      "hi",
       "en"
     ],
     "categories": [
       "Movie",
-      "TV"
+      "TvSeries",
+      "Anime"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.skystream.CinemaCity.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cinemacity.skystream.sky"
   },
   {
     "packageName": "com.dudefilms.skystream",
