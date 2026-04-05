@@ -1,6 +1,6 @@
 [
   {
-    "packageName": "dev.skystream.dudefilms",
+    "packageName": "dev.skystream.CinemaCity",
     "name": "CinemaCity",
     "version": 1,
     "baseUrl": "https://cinemacity.cc",
@@ -15,7 +15,7 @@
       "Movie",
       "TV"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.skystream.dudefilms.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.skystream.CinemaCity.sky"
   },
   {
     "packageName": "com.dudefilms.skystream",
