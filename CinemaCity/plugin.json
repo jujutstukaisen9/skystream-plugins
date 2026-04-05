@@ -1,18 +1,10 @@
 {
-    "packageName": "dev.cinemacity.skystream",
-    "name": "CinemaCity",
-    "version": 1,
-    "baseUrl": "https://cinemacity.cc",
-    "description": "CinemaCity - Full-featured streaming provider with TMDB and Cinemeta enrichment. Supports Movies, TV Series, Anime, and more.",
-    "authors": [
-        "Cinemacity Team",
-        "Migrated by MiniMax Agent"
-    ],
-    "languages": [
-        "en"
-    ],
-    "categories": [
-        "Movie",
-        "TvSeries",
-        "Anime"
- 
+  "packageName": "com.cinemacity.skystream",
+  "name": "cinemacity",
+  "version": 1,
+  "baseUrl": "https://cinemacity.cc",
+  "description": "DudeFilms Provider - Bollywood, Hollywood, South Indian, Web Series and more",
+  "authors": ["DudeFilms Team"],
+  "languages": ["hi", "en"],
+  "categories": ["Movie", "TvSeries", "Anime"]
+}
