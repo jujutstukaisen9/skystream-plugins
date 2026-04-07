@@ -21,26 +21,6 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cinemacity.skystream.sky"
   },
   {
-    "packageName": "com.dudefilms.skystream",
-    "name": "DudeFilms",
-    "version": 1,
-    "baseUrl": "https://dudefilms.sarl",
-    "description": "DudeFilms Provider - Bollywood, Hollywood, South Indian, Web Series and more",
-    "authors": [
-      "DudeFilms Team"
-    ],
-    "languages": [
-      "hi",
-      "en"
-    ],
-    "categories": [
-      "Movie",
-      "TvSeries",
-      "Anime"
-    ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.dudefilms.skystream.sky"
-  },
-  {
     "packageName": "com.cncverse.moviebox",
     "name": "MovieBox",
     "version": 13,
