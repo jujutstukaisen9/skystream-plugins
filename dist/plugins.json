@@ -24,6 +24,25 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cncverse.moviebox.sky"
   },
   {
+    "packageName": "com.george675.plugins.hindmovie",
+    "name": "HindMovie",
+    "version": 8,
+    "baseUrl": "https://hindmovie.ltd",
+    "description": "Watch Movies & TvSeries (Multi-Lang)",
+    "authors": [
+      "Phisher98"
+    ],
+    "languages": [
+      "en",
+      "hi"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.george675.plugins.hindmovie.sky"
+  },
+  {
     "packageName": "movieblast",
     "name": "MovieBlast",
     "version": 1,
