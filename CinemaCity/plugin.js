@@ -1,634 +1,611 @@
-(function () {
-  /**
-   * @type {import('@skystream/sdk').Manifest}
-   */
-  // manifest is injected at runtime by SkyStream
+(function() {
+    const MANIFEST_BASE_URL = "https://cinemacity.cc";
+    const TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
+    const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
+    const CINEMETA_URL = "https://v3-cinemeta.strem.io/meta";
+    const METAHUB_LOGO = "https://live.metahub.space/logo/medium";
 
-  // ----------------------------------------------------------------
-  // Constants
-  // ----------------------------------------------------------------
-  var TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
-  var CINEMETA_URL    = "https://v3-cinemeta.strem.io/meta";
-  var TMDB_API_KEY    = "1865f43a0549ca50d341dd9ab8b29f49";
+    const DECODED_COOKIE = "dle_user_id=32729; dle_password=894171c6a8dab18ee594d5c652009a35;";
 
-  // Decoded from original Kotlin base64:
-  // ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs=
-  // -> dle_user_id=32729; dle_password=894171c6a8dab18ee594d5c652009a35;
-  var SITE_COOKIE = "dle_user_id=32729; dle_password=894171c6a8dab18ee594d5c652009a35;";
+    const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
 
-  var HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Cookie": SITE_COOKIE
-  };
+    const BASE_HEADERS = {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": `${MANIFEST_BASE_URL}/`,
+        "Cookie": DECODED_COOKIE
+    };
 
-  // ----------------------------------------------------------------
-  // Utility helpers
-  // ----------------------------------------------------------------
-  function fixUrl(u) {
-    if (!u) return "";
-    u = String(u).trim();
-    if (u.startsWith("//"))    return "https:" + u;
-    if (u.startsWith("/"))     return manifest.baseUrl.replace(/\/$/, "") + u;
-    if (!u.startsWith("http")) return manifest.baseUrl.replace(/\/$/, "") + "/" + u;
-    return u;
-  }
-
-  function decodeHtml(h) {
-    if (!h) return "";
-    return String(h)
-      .replace(/&amp;/g,  "&")
-      .replace(/&lt;/g,   "<")
-      .replace(/&gt;/g,   ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#039;/g, "'")
-      .replace(/&#(\d+);/g, function(_, d) { return String.fromCharCode(parseInt(d, 10)); });
-  }
-
-  function textOf(el) {
-    if (!el) return "";
-    return decodeHtml((el.textContent || "").replace(/\s+/g, " ").trim());
-  }
-
-  function getAttr(el) {
-    if (!el || !el.getAttribute) return "";
-    var attrs = Array.prototype.slice.call(arguments, 1);
-    for (var i = 0; i < attrs.length; i++) {
-      var v = el.getAttribute(attrs[i]);
-      if (v && String(v).trim()) return String(v).trim();
-    }
-    return "";
-  }
-
-  function safeAtob(str) {
-    if (!str) return "";
-    try {
-      var s = String(str).trim().replace(/-/g, "+").replace(/_/g, "/");
-      while (s.length % 4 !== 0) s += "=";
-      return atob(s);
-    } catch (_) {
-      try { return atob(str); } catch (__) { return ""; }
-    }
-  }
-
-  function getQualityLabel(url) {
-    var u = String(url || "").toLowerCase();
-    if (u.indexOf("2160p") !== -1 || u.indexOf("4k") !== -1) return "4K";
-    if (u.indexOf("1440p") !== -1) return "1440p";
-    if (u.indexOf("1080p") !== -1) return "1080p";
-    if (u.indexOf("720p")  !== -1) return "720p";
-    if (u.indexOf("480p")  !== -1) return "480p";
-    if (u.indexOf("360p")  !== -1) return "360p";
-    return "Auto";
-  }
-
-  // ----------------------------------------------------------------
-  // TMDB ID lookup via IMDb ID
-  // ----------------------------------------------------------------
-  async function tmdbIdFromImdb(imdbId, mediaType) {
-    try {
-      var res = await http_get(
-        "https://api.themoviedb.org/3/find/" + imdbId +
-        "?api_key=" + TMDB_API_KEY + "&external_source=imdb_id"
-      );
-      var data = JSON.parse(res.body);
-      var movieRes = data.movie_results;
-      var tvRes    = data.tv_results;
-      if (mediaType === "tv") {
-        return (tvRes    && tvRes[0]    ? tvRes[0].id    : null) ||
-               (movieRes && movieRes[0] ? movieRes[0].id : null) || null;
-      }
-      return (movieRes && movieRes[0] ? movieRes[0].id : null) ||
-             (tvRes    && tvRes[0]    ? tvRes[0].id    : null) || null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // ----------------------------------------------------------------
-  // Parse TMDB credits JSON into Actor[]
-  // ----------------------------------------------------------------
-  function parseCredits(jsonText) {
-    if (!jsonText) return [];
-    try {
-      var data = JSON.parse(jsonText);
-      var cast = data.cast || [];
-      return cast.slice(0, 20).map(function(c) {
-        return new Actor({
-          name:  c.name || c.original_name || "",
-          role:  c.character || "",
-          image: c.profile_path ? TMDB_IMAGE_BASE + c.profile_path : undefined
-        });
-      });
-    } catch (_) { return []; }
-  }
-
-  // ----------------------------------------------------------------
-  // Subtitle string parser
-  // Format: "[English]https://url,[Spanish]https://url2"
-  // ----------------------------------------------------------------
-  function parseSubtitles(raw) {
-    if (!raw) return [];
-    var tracks  = [];
-    var entries = String(raw).split(",");
-    for (var i = 0; i < entries.length; i++) {
-      var m = /\[(.+?)\](https?:\/\/.+)/.exec(entries[i].trim());
-      if (m) tracks.push({ language: m[1], subtitleUrl: m[2] });
-    }
-    return tracks;
-  }
-
-  // ----------------------------------------------------------------
-  // PlayerJS decoder
-  //
-  // Mirrors Kotlin logic exactly:
-  //   1. doc.select("script:containsData(atob)").getOrNull(1)
-  //      → collect all <script> blocks containing "atob(", take index 1
-  //   2. base64Decode(script.substringAfter('atob("').substringBefore('")'))
-  //   3. Parse JSON: content between "new Playerjs(" and last ");"
-  // ----------------------------------------------------------------
-  function decodePlayerJs(html) {
-    var scriptRe    = /<script[^>]*>([\s\S]*?)<\/script>/gi;
-    var atobScripts = [];
-    var m;
-    while ((m = scriptRe.exec(html)) !== null) {
-      if (m[1].indexOf("atob(") !== -1) atobScripts.push(m[1]);
-    }
-
-    // Kotlin getOrNull(1) = 0-indexed index 1 = second script with atob
-    var playerScript = atobScripts[1];
-    if (!playerScript) return null;
-
-    // Extract base64 between atob(" and ")
-    var b64m = /atob\(["']([^"']+)["']\)/.exec(playerScript);
-    if (!b64m) return null;
-
-    var decoded;
-    try { decoded = safeAtob(b64m[1]); } catch (_) { return null; }
-
-    // Extract JSON: between "new Playerjs(" and last ");"
-    var marker    = "new Playerjs(";
-    var jsonStart = decoded.indexOf(marker);
-    if (jsonStart === -1) return null;
-    jsonStart += marker.length;
-
-    var jsonEnd = decoded.lastIndexOf(");");
-    if (jsonEnd <= jsonStart) return null;
-
-    try {
-      return JSON.parse(decoded.substring(jsonStart, jsonEnd));
-    } catch (_) { return null; }
-  }
-
-  // ----------------------------------------------------------------
-  // Parse a div.dar-short_item element into a MultimediaItem
-  // Mirrors Kotlin Element.toSearchResult()
-  // ----------------------------------------------------------------
-  function parseSearchItem(el) {
-    if (!el) return null;
-
-    // First <a> in element -> title (text before "(") and href
-    var anchor = el.querySelector("a");
-    if (!anchor) return null;
-
-    var rawTitle = textOf(anchor).split("(")[0].trim();
-    if (!rawTitle) return null;
-
-    var href = fixUrl(getAttr(anchor, "href"));
-    if (!href) return null;
-
-    // div.dar-short_bg a -> poster URL (stored as link href in this WordPress theme)
-    var bgEl      = el.querySelector("div.dar-short_bg a");
-    var posterUrl = bgEl ? fixUrl(getAttr(bgEl, "href")) : "";
-
-    var type = href.toLowerCase().indexOf("/tv-series/") !== -1 ? "series" : "movie";
-
-    return new MultimediaItem({ title: rawTitle, url: href, posterUrl: posterUrl, type: type });
-  }
-
-  // ----------------------------------------------------------------
-  // getHome
-  // Mirrors Kotlin mainPageOf() sections + adds "Trending" hero carousel
-  // ----------------------------------------------------------------
-  async function getHome(cb) {
-    try {
-      var sections = [
-        { name: "Trending",    path: ""                           },
-        { name: "Movies",      path: "movies"                     },
-        { name: "TV Series",   path: "tv-series"                  },
-        { name: "Anime",       path: "xfsearch/genre/anime"       },
-        { name: "Asian",       path: "xfsearch/genre/asian"       },
-        { name: "Animation",   path: "xfsearch/genre/animation"   },
-        { name: "Documentary", path: "xfsearch/genre/documentary" }
-      ];
-
-      var homeData = {};
-
-      for (var i = 0; i < sections.length; i++) {
-        var sec = sections[i];
+    function safeAtob(str) {
+        if (!str) return "";
         try {
-          var url = sec.path
-            ? manifest.baseUrl + "/" + sec.path
-            : manifest.baseUrl;
-          var res = await http_get(url, HEADERS);
-          var doc = await parseHtml(res.body);
-          var rawItems = Array.from(doc.querySelectorAll("div.dar-short_item"));
-          var items    = rawItems.map(parseSearchItem).filter(Boolean).slice(0, 24);
-          if (items.length > 0) homeData[sec.name] = items;
-        } catch (e) {
-          console.error("[CinemaCity] Section [" + sec.name + "] failed: " +
-            String(e && e.message ? e.message : e));
+            let s = String(str).trim().replace(/-/g, "+").replace(/_/g, "/");
+            while (s.length % 4 !== 0) s += "=";
+            return atob(s);
+        } catch (_) {
+            return "";
         }
-      }
-
-      cb({ success: true, data: homeData });
-    } catch (e) {
-      cb({ success: false, errorCode: "HOME_ERROR",
-           message: String(e && e.message ? e.message : e) });
     }
-  }
 
-  // ----------------------------------------------------------------
-  // search
-  // Mirrors Kotlin search() -> /index.php?do=search&subaction=search&...
-  // ----------------------------------------------------------------
-  async function search(query, cb) {
-    try {
-      var encoded = encodeURIComponent(String(query || "").trim());
-      var url = manifest.baseUrl +
-        "/index.php?do=search&subaction=search&search_start=1&full_search=0&story=" + encoded;
-      var res = await http_get(url, HEADERS);
-      var doc = await parseHtml(res.body);
-      var items = Array.from(doc.querySelectorAll("div.dar-short_item"))
-        .map(parseSearchItem)
-        .filter(Boolean);
-      cb({ success: true, data: items });
-    } catch (e) {
-      cb({ success: false, errorCode: "SEARCH_ERROR",
-           message: String(e && e.message ? e.message : e) });
+    function decodeHtml(text) {
+        if (!text) return "";
+        return String(text)
+            .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+            .replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&#039;/g, "'")
+            .replace(/&apos;/g, "'");
     }
-  }
 
-  // ----------------------------------------------------------------
-  // load
-  // Full feature-parity with Kotlin load():
-  //   - og:title / og:image / year
-  //   - Audio language from <li> metadata block
-  //   - Description from #about div.ta-full_text1
-  //   - Recommendations from div.ta-rel
-  //   - IMDb ID from div.ta-full_rating1 > div[onclick]
-  //   - TMDB ID lookup + credits
-  //   - Cinemeta metadata enrichment
-  //   - PlayerJS base64 decode + JSON parse
-  //   - TV Series: season/episode folder traversal + Cinemeta ep metadata
-  //   - Movie: single streamUrl
-  //   - Subtitle track parsing [Lang]URL format
-  // ----------------------------------------------------------------
-  async function load(url, cb) {
-    try {
-      var res  = await http_get(url, HEADERS);
-      var html = res.body;
-      var doc  = await parseHtml(html);
+    function fixUrl(href, base) {
+        if (!href) return "";
+        const b = base || MANIFEST_BASE_URL;
+        if (href.startsWith("//")) return "https:" + href;
+        if (href.startsWith("/")) return b.replace(/\/$/, "") + href;
+        if (/^https?:\/\//i.test(href)) return href;
+        return b.replace(/\/$/, "") + "/" + href;
+    }
 
-      // --- Basic metadata ---
-      var ogTitleEl = doc.querySelector("meta[property='og:title']");
-      var ogTitle   = getAttr(ogTitleEl, "content") || "";
-      var title     = ogTitle.split("(")[0].trim() || "Unknown";
-      var yearM     = /\((\d{4})\)/.exec(ogTitle);
-      var year      = yearM ? parseInt(yearM[1]) : null;
+    function getQualityFromString(str) {
+        if (!str) return 0;
+        const s = str.toLowerCase();
+        if (s.includes("2160") || s.includes("4k")) return 2160;
+        if (s.includes("1080")) return 1080;
+        if (s.includes("720")) return 720;
+        if (s.includes("480")) return 480;
+        if (s.includes("360")) return 360;
+        if (s.includes("ts") || s.includes("cam")) return 360;
+        return 0;
+    }
 
-      var ogImageEl = doc.querySelector("meta[property='og:image']");
-      var poster    = getAttr(ogImageEl, "content") || "";
+    function qualityToLabel(quality) {
+        if (quality >= 2160) return "4K";
+        if (quality >= 1080) return "1080p";
+        if (quality >= 720) return "720p";
+        if (quality >= 480) return "480p";
+        if (quality >= 360) return "360p";
+        return "Auto";
+    }
 
-      var bgLinkEl  = doc.querySelector("div.dar-full_bg a");
-      var bgposter  = bgLinkEl ? fixUrl(getAttr(bgLinkEl, "href")) : poster;
+    function extractScore(text) {
+        if (!text) return null;
+        const m = String(text).match(/(\d+\.?\d*)/);
+        return m ? parseFloat(m[1]) / 10 * 10 : null;
+    }
 
-      var trailerEl = doc.querySelector("div.dar-full_bg.e-cover > div");
-      var trailer   = trailerEl ? getAttr(trailerEl, "data-vbg") : "";
+    function parseYear(title) {
+        const m = String(title).match(/\((\d{4})\)/);
+        return m ? parseInt(m[1]) : null;
+    }
 
-      // --- Audio languages ---
-      var audioLanguages = null;
-      var liEls = Array.from(doc.querySelectorAll("li"));
-      for (var li = 0; li < liEls.length; li++) {
-        var spans = liEls[li].querySelectorAll("span");
-        if (spans.length >= 1 && textOf(spans[0]).toLowerCase() === "audio language") {
-          if (spans.length >= 2) {
-            var langAnchors = Array.from(spans[1].querySelectorAll("a"));
-            var langs = langAnchors.map(textOf).filter(Boolean);
-            if (langs.length) audioLanguages = langs.join(", ");
-          }
-          break;
-        }
-      }
+    async function request(url, headers) {
+        return http_get(url, { headers: Object.assign({}, BASE_HEADERS, headers || {}) });
+    }
 
-      // --- Description ---
-      var descEl       = doc.querySelector("#about div.ta-full_text1");
-      var descriptions = descEl ? textOf(descEl) : "";
+    async function loadDoc(url) {
+        const res = await request(url);
+        return parseHtml(res.body);
+    }
 
-      // --- Recommendations ---
-      var recEls = Array.from(doc.querySelectorAll("div.ta-rel > div.ta-rel_item"));
-      var recommendations = recEls.map(function(el) {
-        var a       = el.querySelector("a");
-        var rTitle  = a ? textOf(a).split("(")[0].trim() : "";
-        var rHref   = a ? fixUrl(getAttr(a, "href")) : "";
-        var rPEl    = el.querySelector("div > a");
-        var rPoster = rPEl ? fixUrl(getAttr(rPEl, "href")) : "";
-        if (!rTitle || !rHref) return null;
-        return new MultimediaItem({ title: rTitle, url: rHref, posterUrl: rPoster, type: "movie" });
-      }).filter(Boolean);
-
-      // --- Content type: movie vs series ---
-      var tvtype   = url.toLowerCase().indexOf("/movies/") !== -1 ? "movie" : "series";
-      var tmdbmeta = tvtype === "series" ? "tv" : "movie";
-
-      // --- IMDb ID from rating div onclick attributes ---
-      var imdbId = null;
-      var ratingDivs = Array.from(doc.querySelectorAll("div.ta-full_rating1 > div"));
-      for (var rd = 0; rd < ratingDivs.length; rd++) {
-        var onclick = getAttr(ratingDivs[rd], "onclick");
-        var idm = /tt\d+/.exec(onclick);
-        if (idm) { imdbId = idm[0]; break; }
-      }
-
-      // --- TMDB ID ---
-      var tmdbId = null;
-      if (imdbId) tmdbId = await tmdbIdFromImdb(imdbId, tmdbmeta);
-
-      // --- Logo from metahub ---
-      var logoUrl = imdbId
-        ? "https://live.metahub.space/logo/medium/" + imdbId + "/img"
-        : null;
-
-      // --- TMDB credits ---
-      var castList = [];
-      if (tmdbId) {
+    function parseCredits(creditsJson) {
+        if (!creditsJson) return [];
         try {
-          var credRes = await http_get(
-            "https://api.themoviedb.org/3/" + tmdbmeta + "/" + tmdbId +
-            "/credits?api_key=" + TMDB_API_KEY + "&language=en-US"
-          );
-          castList = parseCredits(credRes.body);
-        } catch (_) {}
-      }
-
-      // --- Cinemeta metadata ---
-      var meta = null;
-      if (imdbId) {
-        try {
-          var cineType = tvtype === "series" ? "series" : "movie";
-          var cineRes  = await http_get(
-            CINEMETA_URL + "/" + cineType + "/" + imdbId + ".json"
-          );
-          if (cineRes.body && cineRes.body.trim().charAt(0) === "{") {
-            var parsed = JSON.parse(cineRes.body);
-            meta = (parsed && parsed.meta) ? parsed.meta : null;
-          }
-        } catch (_) {}
-      }
-
-      var description   = (meta && meta.description)  || descriptions;
-      var background    = (meta && meta.background)    || bgposter;
-      var genres        = (meta && meta.genres)        || [];
-      var score         = (meta && meta.imdbRating)    ? parseFloat(meta.imdbRating) : null;
-      var contentRating = (meta && meta.appExtras && meta.appExtras.certification) || null;
-      var finalTitle    = (meta && meta.name)          || title;
-      var finalYear     = year || (meta && meta.year ? parseInt(meta.year) : null);
-      var finalPlot     = audioLanguages
-        ? description + " - Audio: " + audioLanguages
-        : description;
-
-      // Build episode meta map from Cinemeta videos
-      var epMetaMap = {};
-      if (meta && meta.videos) {
-        for (var vi = 0; vi < meta.videos.length; vi++) {
-          var v = meta.videos[vi];
-          if (v.season != null && v.episode != null) {
-            epMetaMap[v.season + ":" + v.episode] = v;
-          }
-        }
-      }
-
-      // Trailers
-      var trailers = trailer ? [new Trailer({ url: trailer })] : undefined;
-
-      // ---- PlayerJS decode ----
-      var playerJson = decodePlayerJs(html);
-      if (!playerJson) {
-        return cb({
-          success: false,
-          errorCode: "PLAYER_NOT_FOUND",
-          message: "PlayerJS block not found on this page (may require login or is torrent-only)"
-        });
-      }
-
-      // Normalise file array
-      var fileArray = [];
-      var rawFile   = playerJson.file;
-      if (Array.isArray(rawFile)) {
-        fileArray = rawFile;
-      } else if (typeof rawFile === "string") {
-        var fv = rawFile.trim();
-        if (fv.charAt(0) === "[") {
-          try { fileArray = JSON.parse(fv); } catch (_) { fileArray = []; }
-        } else if (fv.charAt(0) === "{") {
-          try { fileArray = [JSON.parse(fv)]; } catch (_) { fileArray = []; }
-        } else if (fv) {
-          fileArray = [{ file: fv }];
-        }
-      } else if (rawFile && typeof rawFile === "object") {
-        fileArray = [rawFile];
-      }
-
-      var SEASON_RE  = /Season\s*(\d+)/i;
-      var EPISODE_RE = /Episode\s*(\d+)/i;
-
-      // ---- TV Series branch ----
-      if (tvtype === "series") {
-        var episodeList = [];
-
-        for (var si = 0; si < fileArray.length; si++) {
-          var seasonObj = fileArray[si];
-          var sm = SEASON_RE.exec(seasonObj.title || "");
-          if (!sm) continue;
-          var seasonNumber = parseInt(sm[1]);
-          var epFolder = Array.isArray(seasonObj.folder) ? seasonObj.folder : [];
-
-          for (var ei = 0; ei < epFolder.length; ei++) {
-            var epObj = epFolder[ei];
-            var em = EPISODE_RE.exec(epObj.title || "");
-            if (!em) continue;
-            var episodeNumber = parseInt(em[1]);
-
-            // Collect stream URLs: direct file + nested folder sources
-            var streamUrls = [];
-            if (epObj.file) streamUrls.push(epObj.file);
-            if (Array.isArray(epObj.folder)) {
-              for (var fi = 0; fi < epObj.folder.length; fi++) {
-                if (epObj.folder[fi] && epObj.folder[fi].file) {
-                  streamUrls.push(epObj.folder[fi].file);
-                }
-              }
-            }
-            if (!streamUrls.length) continue;
-
-            var metaKey = seasonNumber + ":" + episodeNumber;
-            var epMeta  = epMetaMap[metaKey] || null;
-            var epSubs  = parseSubtitles(epObj.subtitle || "");
-
-            episodeList.push(new Episode({
-              name: epMeta
-                ? (epMeta.name || ("S" + seasonNumber + "E" + episodeNumber))
-                : ("S" + seasonNumber + "E" + episodeNumber),
-              url:         JSON.stringify({ streams: streamUrls, subtitleTracks: epSubs }),
-              season:      seasonNumber,
-              episode:     episodeNumber,
-              description: epMeta ? (epMeta.overview  || null) : null,
-              posterUrl:   epMeta ? (epMeta.thumbnail || null) : null,
-              airDate:     epMeta ? (epMeta.released  || null) : null
+            const data = JSON.parse(creditsJson);
+            return (data.cast || []).slice(0, 20).map(c => new Actor({
+                name: c.name,
+                role: c.character,
+                image: c.profile_path ? `${TMDB_IMAGE_BASE}${c.profile_path}` : undefined
             }));
-          }
+        } catch (_) {
+            return [];
         }
-
-        return cb({
-          success: true,
-          data: new MultimediaItem({
-            title:         finalTitle,
-            url:           url,
-            posterUrl:     poster,
-            bannerUrl:     background,
-            logoUrl:       logoUrl,
-            type:          "series",
-            description:   finalPlot,
-            year:          finalYear,
-            score:         score,
-            contentRating: contentRating,
-            cast:          castList,
-            tags:          genres,
-            episodes:      episodeList,
-            recommendations: recommendations,
-            trailers:      trailers
-          })
-        });
-      }
-
-      // ---- Movie branch ----
-      var firstObj   = fileArray[0] || null;
-      var hasFolder  = firstObj && Array.isArray(firstObj.folder);
-      var movieStreamUrl = (!hasFolder && firstObj && firstObj.file) ? firstObj.file : null;
-
-      if (!movieStreamUrl) {
-        return cb({
-          success: false,
-          errorCode: "STREAM_NOT_FOUND",
-          message: "No direct stream URL found in PlayerJS for this movie"
-        });
-      }
-
-      // Movie subtitles
-      var rawSub    = playerJson.subtitle || (firstObj && firstObj.subtitle) || "";
-      var movieSubs = parseSubtitles(rawSub);
-
-      return cb({
-        success: true,
-        data: new MultimediaItem({
-          title:         finalTitle,
-          url:           url,
-          posterUrl:     poster,
-          bannerUrl:     background,
-          logoUrl:       logoUrl,
-          type:          "movie",
-          description:   finalPlot,
-          year:          finalYear,
-          score:         score,
-          contentRating: contentRating,
-          cast:          castList,
-          tags:          genres,
-          recommendations: recommendations,
-          trailers:      trailers,
-          episodes: [
-            new Episode({
-              name:      finalTitle,
-              url:       JSON.stringify({ streamUrl: movieStreamUrl, subtitleTracks: movieSubs }),
-              season:    1,
-              episode:   1,
-              posterUrl: poster
-            })
-          ]
-        })
-      });
-    } catch (e) {
-      cb({ success: false, errorCode: "LOAD_ERROR",
-           message: String(e && e.message ? e.message : e) });
     }
-  }
 
-  // ----------------------------------------------------------------
-  // loadStreams
-  // Parses the JSON payload created by load() and returns StreamResult[].
-  //
-  // Handles both payload shapes:
-  //   { streams: [...], subtitleTracks: [...] }   <- TV Series episode
-  //   { streamUrl: "...", subtitleTracks: [...] }  <- Movie
-  //
-  // Mirrors Kotlin loadLinks() — infers quality from URL path tokens
-  // ----------------------------------------------------------------
-  async function loadStreams(data, cb) {
-    try {
-      var obj = JSON.parse(String(data || "{}"));
-
-      // Collect stream URLs
-      var streamUrls = [];
-      if (Array.isArray(obj.streams)) {
-        for (var i = 0; i < obj.streams.length; i++) {
-          var su = obj.streams[i];
-          if (su && String(su).trim()) streamUrls.push(String(su).trim());
+    function parseSubtitles(raw) {
+        if (!raw) return [];
+        const tracks = [];
+        if (typeof raw === "string") {
+            raw.split(",").forEach(entry => {
+                const match = entry.trim().match(/\[(.+?)](https?:\/\/.+)/);
+                if (match) {
+                    tracks.push({ lang: match[1], url: match[2] });
+                }
+            });
         }
-      } else if (obj.streamUrl && String(obj.streamUrl).trim()) {
-        streamUrls.push(String(obj.streamUrl).trim());
-      }
-
-      if (!streamUrls.length) {
-        return cb({ success: true, data: [] });
-      }
-
-      // Build subtitle list for StreamResult
-      var subtitleTracks = Array.isArray(obj.subtitleTracks) ? obj.subtitleTracks : [];
-      var subtitles = subtitleTracks
-        .filter(function(s) { return s && s.subtitleUrl; })
-        .map(function(s) {
-          return {
-            url:   s.subtitleUrl,
-            label: s.language || "Unknown",
-            lang:  s.language || "unknown"
-          };
-        });
-
-      // One StreamResult per URL
-      var results = streamUrls.map(function(streamUrl) {
-        var quality = getQualityLabel(streamUrl);
-        return new StreamResult({
-          url:      streamUrl,
-          quality:  quality,
-          source:   "CinemaCity" + (quality !== "Auto" ? " " + quality : ""),
-          headers: {
-            "Referer":    manifest.baseUrl + "/",
-            "User-Agent": HEADERS["User-Agent"]
-          },
-          subtitles: subtitles.length ? subtitles : undefined
-        });
-      });
-
-      cb({ success: true, data: results });
-    } catch (e) {
-      cb({ success: false, errorCode: "STREAM_ERROR",
-           message: String(e && e.message ? e.message : e) });
+        return tracks;
     }
-  }
 
-  // ----------------------------------------------------------------
-  // Export to SkyStream runtime
-  // ----------------------------------------------------------------
-  globalThis.getHome     = getHome;
-  globalThis.search      = search;
-  globalThis.load        = load;
-  globalThis.loadStreams  = loadStreams;
+    async function tmdbIdFromImdb(imdbId) {
+        try {
+            const res = await request(
+                `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id`
+            );
+            const data = JSON.parse(res.body);
+            return data.movie_results?.[0]?.id || data.tv_results?.[0]?.id || null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async function getCinemetaData(imdbId, type) {
+        if (!imdbId) return null;
+        try {
+            const endpoint = type === "series" ? "series" : "movie";
+            const res = await request(`${CINEMETA_URL}/${endpoint}/${imdbId}.json`);
+            if (res.body && res.body.trim().startsWith("{")) {
+                return JSON.parse(res.body);
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    function parseSearchItem(el) {
+        const anchor = el.querySelector("a");
+        if (!anchor) return null;
+
+        const href = fixUrl(anchor.getAttribute("href"));
+        if (!href) return null;
+
+        const titleRaw = anchor.textContent || "";
+        const title = titleRaw.split("(")[0].trim();
+        if (!title) return null;
+
+        const bgLink = el.querySelector(".dar-short_bg a, [class*='bg'] a");
+        const posterUrl = bgLink ? fixUrl(bgLink.getAttribute("href")) : null;
+
+        const ratingEl = el.querySelector("span.rating-color");
+        const scoreText = ratingEl ? ratingEl.textContent.trim() : null;
+        const score = extractScore(scoreText);
+
+        const qualityEl = el.querySelector(".e-cover span:nth-child(2) a, .e-cover span");
+        const qualityText = qualityEl ? qualityEl.textContent.trim() : null;
+
+        const isSeries = href.includes("/tv-series/");
+        const type = isSeries ? "series" : "movie";
+
+        return new MultimediaItem({
+            title,
+            url: href,
+            posterUrl,
+            type,
+            contentType: type,
+            score: score,
+            quality: qualityText || undefined
+        });
+    }
+
+    async function getHome(cb) {
+        try {
+            const sections = [
+                { name: "Trending", path: "" },
+                { name: "Movies", path: "movies" },
+                { name: "TV Series", path: "tv-series" },
+                { name: "Anime", path: "xfsearch/genre/anime" },
+                { name: "Asian", path: "xfsearch/genre/asian" },
+                { name: "Animation", path: "xfsearch/genre/animation" },
+                { name: "Documentary", path: "xfsearch/genre/documentary" }
+            ];
+
+            const data = {};
+            for (const sec of sections) {
+                try {
+                    const url = sec.path ? `${MANIFEST_BASE_URL}/${sec.path}` : MANIFEST_BASE_URL;
+                    const res = await request(url);
+                    const doc = parseHtml(res.body);
+                    const items = Array.from(doc.querySelectorAll(".dar-short_item"))
+                        .map(parseSearchItem)
+                        .filter(Boolean);
+
+                    if (items.length > 0) {
+                        data[sec.name] = items.slice(0, 30);
+                    }
+                } catch (e) {
+                    console.error(`Section [${sec.name}] error: ${e.message}`);
+                }
+            }
+
+            cb({ success: true, data });
+        } catch (e) {
+            cb({ success: false, errorCode: "HOME_ERROR", message: String(e?.message || e) });
+        }
+    }
+
+    async function search(query, cb) {
+        try {
+            const encoded = encodeURIComponent(query);
+            const url = `${MANIFEST_BASE_URL}/index.php?do=search&subaction=search&search_start=1&full_search=0&story=${encoded}`;
+            const res = await request(url);
+            const doc = parseHtml(res.body);
+            const items = Array.from(doc.querySelectorAll(".dar-short_item"))
+                .map(parseSearchItem)
+                .filter(Boolean);
+
+            cb({ success: true, data: items });
+        } catch (e) {
+            cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e?.message || e) });
+        }
+    }
+
+    async function load(url, cb) {
+        try {
+            const res = await request(url);
+            const html = res.body;
+            const doc = parseHtml(html);
+
+            const ogTitleEl = doc.querySelector('meta[property="og:title"]');
+            const ogTitle = ogTitleEl ? ogTitleEl.getAttribute("content") : "";
+            const title = ogTitle.split("(")[0].trim() || "Unknown";
+
+            const poster = doc.querySelector('meta[property="og:image"]')?.getAttribute("content") || "";
+            const bgposter = doc.querySelector(".dar-full_bg a")?.getAttribute("href") || "";
+            const trailer = doc.querySelector(".dar-full_bg.e-cover > div")?.getAttribute("data-vbg") || "";
+
+            let audioLanguages = null;
+            const liElements = doc.querySelectorAll("li");
+            for (const li of liElements) {
+                const spanEl = li.querySelector("span");
+                if (spanEl && spanEl.textContent.toLowerCase().includes("audio language")) {
+                    const langSpans = li.querySelectorAll("span:eq(1) a");
+                    audioLanguages = Array.from(langSpans).map(s => s.textContent.trim()).filter(Boolean).join(", ");
+                    break;
+                }
+            }
+
+            const descriptionEl = doc.querySelector("#about .ta-full_text1");
+            const description = descriptionEl ? descriptionEl.textContent.trim() : "";
+
+            const year = parseYear(ogTitle);
+            const isSeries = url.includes("/tv-series/");
+            const type = isSeries ? "series" : "movie";
+
+            let imdbId = null;
+            const ratingDivs = doc.querySelectorAll(".ta-full_rating1 > div");
+            for (const div of ratingDivs) {
+                const onclick = div.getAttribute("onclick") || "";
+                const match = onclick.match(/(tt\d+)/i);
+                if (match) {
+                    imdbId = match[1];
+                    break;
+                }
+            }
+
+            const tmdbMetaType = isSeries ? "tv" : "movie";
+            let tmdbId = null;
+            let logoUrl = null;
+            let castList = [];
+            let cinemetaData = null;
+
+            if (imdbId) {
+                tmdbId = await tmdbIdFromImdb(imdbId);
+                logoUrl = `${METAHUB_LOGO}/${imdbId}/img`;
+
+                if (tmdbId) {
+                    try {
+                        const creditsRes = await request(
+                            `https://api.themoviedb.org/3/${tmdbMetaType}/${tmdbId}/credits?api_key=${TMDB_API_KEY}&language=en-US`
+                        );
+                        castList = parseCredits(creditsRes.body);
+                    } catch (_) {}
+                }
+
+                cinemetaData = await getCinemetaData(imdbId, type);
+            }
+
+            let finalDescription = description;
+            let background = poster;
+            let genres = [];
+            let imdbRating = null;
+
+            if (cinemetaData?.meta) {
+                const meta = cinemetaData.meta;
+                finalDescription = meta.description || description;
+                background = meta.background || poster;
+                genres = meta.genres || [];
+                imdbRating = meta.imdbRating ? parseFloat(meta.imdbRating) : null;
+            }
+
+            const epMetaMap = {};
+            if (cinemetaData?.meta?.videos) {
+                for (const v of cinemetaData.meta.videos) {
+                    if (v.season != null && v.episode != null) {
+                        epMetaMap[`${v.season}:${v.episode}`] = v;
+                    }
+                }
+            }
+
+            const scripts = Array.from(doc.querySelectorAll("script"));
+            let playerScriptData = null;
+
+            for (const script of scripts) {
+                const text = script.textContent || "";
+                if (text.includes("atob") && text.includes("Playerjs")) {
+                    const atobMatch = text.match(/atob\s*\(\s*["']([^"']+)["']\s*\)/);
+                    if (atobMatch) {
+                        try {
+                            const decoded = safeAtob(atobMatch[1]);
+                            const playerMatch = decoded.match(/new\s+Playerjs\s*\(\s*(\{[^}]+\})\s*\)/s);
+                            if (playerMatch) {
+                                playerScriptData = JSON.parse(playerMatch[1]);
+                                break;
+                            }
+                        } catch (_) {}
+                    }
+                }
+            }
+
+            if (!playerScriptData) {
+                for (const script of scripts) {
+                    const text = script.textContent || "";
+                    if (text.includes("Playerjs")) {
+                        const playerMatch = text.match(/new\s+Playerjs\s*\(\s*(\{[^}]+(?:\{[^}]+\}[^}]*)*\})\s*\)/s);
+                        if (playerMatch) {
+                            try {
+                                playerScriptData = JSON.parse(playerMatch[1]);
+                                break;
+                            } catch (_) {
+                                const atobPattern = text.match(/atob\s*\(\s*["']([^"']+)["']\s*\)/);
+                                if (atobPattern) {
+                                    try {
+                                        const decoded = safeAtob(atobPattern[1]);
+                                        const innerMatch = decoded.match(/new\s+Playerjs\s*\(\s*(\{[^}]+\})\s*\)/s);
+                                        if (innerMatch) {
+                                            playerScriptData = JSON.parse(innerMatch[1]);
+                                            break;
+                                        }
+                                    } catch (__) {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!playerScriptData) {
+                return cb({ success: false, errorCode: "PLAYER_NOT_FOUND", message: "PlayerJS not found; only torrent links available" });
+            }
+
+            const rawFile = playerScriptData.file;
+            let fileArray = [];
+
+            if (Array.isArray(rawFile)) {
+                fileArray = rawFile;
+            } else if (typeof rawFile === "string") {
+                const trimmed = rawFile.trim();
+                if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                    try { fileArray = JSON.parse(trimmed); } catch (_) {}
+                } else if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                    try { fileArray = [JSON.parse(trimmed)]; } catch (_) {}
+                } else if (trimmed) {
+                    fileArray = [{ file: trimmed }];
+                }
+            }
+
+            const seasonRegex = /Season\s*(\d+)/i;
+            const episodeRegex = /Episode\s*(\d+)/i;
+
+            const episodes = [];
+
+            if (isSeries) {
+                for (const seasonObj of fileArray) {
+                    if (!seasonObj || typeof seasonObj !== "object") continue;
+
+                    const seasonTitle = seasonObj.title || "";
+                    const seasonMatch = seasonTitle.match(seasonRegex);
+                    if (!seasonMatch) continue;
+                    const seasonNumber = parseInt(seasonMatch[1]);
+
+                    const epFolder = seasonObj.folder;
+                    if (!Array.isArray(epFolder)) continue;
+
+                    for (const epObj of epFolder) {
+                        if (!epObj || typeof epObj !== "object") continue;
+
+                        const epTitle = epObj.title || "";
+                        const epMatch = epTitle.match(episodeRegex);
+                        if (!epMatch) continue;
+                        const episodeNumber = parseInt(epMatch[1]);
+
+                        const streamUrls = [];
+                        if (epObj.file && typeof epObj.file === "string" && epObj.file.trim()) {
+                            streamUrls.push(epObj.file.trim());
+                        }
+
+                        if (Array.isArray(epObj.folder)) {
+                            for (const src of epObj.folder) {
+                                if (src && src.file && typeof src.file === "string" && src.file.trim()) {
+                                    streamUrls.push(src.file.trim());
+                                }
+                            }
+                        }
+
+                        if (streamUrls.length === 0) continue;
+
+                        const metaKey = `${seasonNumber}:${episodeNumber}`;
+                        const epMeta = epMetaMap[metaKey];
+
+                        const subtitles = parseSubtitles(epObj.subtitle || null);
+
+                        const episodeData = {
+                            streams: streamUrls,
+                            subtitles: subtitles
+                        };
+
+                        episodes.push(new Episode({
+                            name: epMeta?.name || `S${seasonNumber}E${episodeNumber}`,
+                            url: JSON.stringify(episodeData),
+                            season: seasonNumber,
+                            episode: episodeNumber,
+                            description: epMeta?.overview || null,
+                            posterUrl: epMeta?.thumbnail || null,
+                            airDate: epMeta?.released || null
+                        }));
+                    }
+                }
+
+                if (episodes.length === 0) {
+                    return cb({ success: false, errorCode: "NO_EPISODES", message: "No episodes found" });
+                }
+
+                episodes.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+
+                const plot = buildPlot(finalDescription, audioLanguages);
+                const recommendations = parseRecommendations(doc);
+
+                cb({
+                    success: true,
+                    data: new MultimediaItem({
+                        title: cinemetaData?.meta?.name || title,
+                        url,
+                        posterUrl: poster,
+                        bannerUrl: background || bgposter,
+                        logoUrl,
+                        type: "series",
+                        contentType: "series",
+                        description: plot,
+                        year: year || (cinemetaData?.meta?.year ? parseInt(cinemetaData.meta.year) : null),
+                        score: imdbRating,
+                        genres,
+                        cast: castList,
+                        recommendations,
+                        syncData: {
+                            imdb: imdbId,
+                            tmdb: tmdbId ? String(tmdbId) : undefined
+                        },
+                        episodes
+                    })
+                });
+            } else {
+                if (fileArray.length === 0 || (fileArray[0] && fileArray[0].folder)) {
+                    return cb({ success: false, errorCode: "NO_STREAMS", message: "No stream URLs found" });
+                }
+
+                const movieFile = fileArray[0]?.file || "";
+                const subtitles = parseSubtitles(
+                    playerScriptData.subtitle ||
+                    (fileArray[0]?.subtitle ? fileArray[0].subtitle : null)
+                );
+
+                const episodeData = {
+                    streams: [movieFile],
+                    subtitles
+                };
+
+                const plot = buildPlot(finalDescription, audioLanguages);
+                const recommendations = parseRecommendations(doc);
+
+                cb({
+                    success: true,
+                    data: new MultimediaItem({
+                        title: cinemetaData?.meta?.name || title,
+                        url,
+                        posterUrl: poster,
+                        bannerUrl: background || bgposter,
+                        logoUrl,
+                        type: "movie",
+                        contentType: "movie",
+                        description: plot,
+                        year: year || (cinemetaData?.meta?.year ? parseInt(cinemetaData.meta.year) : null),
+                        score: imdbRating,
+                        genres,
+                        cast: castList,
+                        recommendations,
+                        syncData: {
+                            imdb: imdbId,
+                            tmdb: tmdbId ? String(tmdbId) : undefined
+                        },
+                        episodes: [new Episode({
+                            name: "Watch",
+                            url: JSON.stringify(episodeData),
+                            season: 1,
+                            episode: 1
+                        })]
+                    })
+                });
+            }
+        } catch (e) {
+            cb({ success: false, errorCode: "LOAD_ERROR", message: String(e?.message || e) });
+        }
+    }
+
+    function buildPlot(description, audioLanguages) {
+        if (!description && !audioLanguages) return "";
+        if (!audioLanguages) return description;
+        if (!description) return `Audio: ${audioLanguages}`;
+        return `${description} - Audio: ${audioLanguages}`;
+    }
+
+    function parseRecommendations(doc) {
+        const items = [];
+        const relItems = doc.querySelectorAll(".ta-rel > .ta-rel_item");
+        for (const item of relItems) {
+            const anchor = item.querySelector("a");
+            if (!anchor) continue;
+            const titleRaw = anchor.textContent || "";
+            const title = titleRaw.split("(")[0].trim();
+            const href = fixUrl(anchor.getAttribute("href"));
+            const scoreEl = item.querySelector("span.rating-color1");
+            const score = extractScore(scoreEl?.textContent);
+            const posterUrl = item.querySelector("div > a")?.getAttribute("href") || null;
+
+            if (title && href) {
+                items.push(new MultimediaItem({
+                    title,
+                    url: href,
+                    posterUrl,
+                    type: "movie",
+                    score
+                }));
+            }
+        }
+        return items;
+    }
+
+    async function loadStreams(dataStr, cb) {
+        try {
+            const payload = JSON.parse(dataStr);
+            const streams = [];
+            const subtitles = [];
+
+            if (payload.subtitles && Array.isArray(payload.subtitles)) {
+                for (const sub of payload.subtitles) {
+                    if (sub.url) {
+                        subtitles.push({
+                            url: sub.url,
+                            label: sub.lang || "Unknown",
+                            lang: sub.lang || "und"
+                        });
+                    }
+                }
+            }
+
+            const urls = payload.streams || [];
+            for (const url of urls) {
+                if (!url || typeof url !== "string" || !url.trim()) continue;
+                const quality = getQualityFromString(url);
+                streams.push(new StreamResult({
+                    url: url.trim(),
+                    quality: qualityToLabel(quality),
+                    subtitles: subtitles.length > 0 ? subtitles : undefined,
+                    headers: { Referer: MANIFEST_BASE_URL + "/" }
+                }));
+            }
+
+            if (streams.length === 0) {
+                cb({ success: false, errorCode: "NO_STREAMS", message: "No playable streams found" });
+                return;
+            }
+
+            cb({ success: true, data: streams });
+        } catch (e) {
+            cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
+        }
+    }
+
+    globalThis.getHome = getHome;
+    globalThis.search = search;
+    globalThis.load = load;
+    globalThis.loadStreams = loadStreams;
 })();
