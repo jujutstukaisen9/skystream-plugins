@@ -1,0 +1,18 @@
+{
+  "packageName": "com.george675.plugins.hindmovie",
+  "name": "HindMovie",
+  "version": 8,
+  "baseUrl": "https://hindmovie.ltd",
+  "description": "Watch Movies & TvSeries (Multi-Lang)",
+  "authors": [
+    "Phisher98"
+  ],
+  "languages": [
+    "en",
+    "hi"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries"
+  ]
+}
