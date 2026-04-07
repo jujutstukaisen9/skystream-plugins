@@ -1,21 +1,22 @@
 [
   {
     "packageName": "com.cinemacity.skystream",
-    "name": "cinemacity",
-    "version": 1,
+    "name": "Cinemacity",
+    "version": 2,
     "baseUrl": "https://cinemacity.cc",
-    "description": "DudeFilms Provider - Bollywood, Hollywood, South Indian, Web Series and more",
+    "description": "Watch Movies & TV Series with Multi-Language/Audio support",
     "authors": [
-      "DudeFilms Team"
+      "Phisher98",
+      "MigrationBot"
     ],
     "languages": [
-      "hi",
       "en"
     ],
     "categories": [
       "Movie",
       "TvSeries",
-      "Anime"
+      "Anime",
+      "AsianDrama"
     ],
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cinemacity.skystream.sky"
   },
