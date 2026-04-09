@@ -1,0 +1,17 @@
+{
+  "packageName": "com.cinemacity.repo",
+  "name": "Cinemacity",
+  "version": 1,
+  "baseUrl": "https://cinemacity.cc",
+  "description": "Cinemacity - Watch Movies & TV Series (Multi-Lang/Audio)",
+  "authors": [
+    "George675"
+  ],
+  "languages": [
+    "en"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries"
+  ]
+}
