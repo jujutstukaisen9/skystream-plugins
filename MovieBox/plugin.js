@@ -257,17 +257,50 @@
         };
     }
 
+    let requestCount = 0;
     async function apiGet(url) {
+        if (requestCount > 0) await new Promise(r => setTimeout(r, 500));
+        requestCount++;
         const res = await http_get(url, getHeaders(url));
+        if (res.status === 407 || res.status === 404 || res.status === 403) {
+            await new Promise(r => setTimeout(r, 1000));
+            const retryRes = await http_get(url, getHeaders(url));
+            if (retryRes.status !== 200) throw new Error("GET " + retryRes.status + ": " + url);
+            return JSON.parse(retryRes.body);
+        }
         if (res.status !== 200) throw new Error("GET " + res.status + ": " + url);
         return JSON.parse(res.body);
     }
 
-    async function apiPost(url, body) {
+    async function apiPost(url, body, useAltHeaders = false) {
         const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
-        const res = await http_post(url, postHeaders(url, bodyStr), bodyStr);
+        const headers = useAltHeaders ? playHeaders(url, "") : postHeaders(url, bodyStr);
+        if (requestCount > 0) await new Promise(r => setTimeout(r, 500));
+        requestCount++;
+        const res = await http_post(url, headers, bodyStr);
+        if (res.status === 407 || res.status === 404 || res.status === 403) {
+            await new Promise(r => setTimeout(r, 1000));
+            const retryRes = await http_post(url, headers, bodyStr);
+            const resBody = typeof retryRes.body === "string" ? retryRes.body : String(retryRes.body || "");
+            if (retryRes.status === 200) {
+                try {
+                    return JSON.parse(resBody);
+                } catch (e) {
+                    throw new Error("Invalid JSON response: " + resBody.substring(0, 200));
+                }
+            }
+            if (resBody.startsWith("<") || !resBody.trim()) {
+                throw new Error("API returned non-JSON: status " + retryRes.status);
+            }
+            throw new Error("POST " + retryRes.status + ": " + resBody.substring(0, 200));
+        }
+        const normalBody = typeof res.body === "string" ? res.body : String(res.body || "");
         if (res.status !== 200) throw new Error("POST " + res.status + ": " + url);
-        return JSON.parse(res.body);
+        try {
+            return JSON.parse(normalBody);
+        } catch (e) {
+            throw new Error("Invalid JSON response: " + normalBody.substring(0, 200));
+        }
     }
 
     function topQuality(s) {
@@ -389,9 +422,20 @@
 
     async function search(query, cb) {
         try {
-            const url = API_BASE + "/wefeed-mobile-bff/subject-api/search/v2";
+            const searchUrl = API_BASE + "/wefeed-mobile-bff/subject-api/search/v2";
             const body = { page: 1, perPage: 20, keyword: query };
-            const data = await apiPost(url, body);
+            
+            let data;
+            try {
+                data = await apiPost(searchUrl, body);
+            } catch (apiErr) {
+                if (apiErr.message.includes("407")) {
+                    cb({ success: false, error: "Search endpoint temporarily unavailable. Try again later." });
+                    return;
+                }
+                throw apiErr;
+            }
+            
             const results = [];
             const hits = data.data && data.data.results || [];
             for (let i = 0; i < hits.length; i++) {
@@ -411,7 +455,11 @@
                     }));
                 }
             }
-            cb({ success: true, data: results });
+            if (results.length === 0) {
+                cb({ success: true, data: results });
+            } else {
+                cb({ success: true, data: results });
+            }
         } catch (e) {
             cb({ success: false, error: e.message });
         }
@@ -446,39 +494,84 @@
     async function loadStreams(url, cb) {
         try {
             const id = url;
-            const tokenUrl = API_BASE + "/wefeed-mobile-bff/subject-api/play";
             const playBody = { subjectId: id, playMode: 1, quality: "auto" };
-            const tokenRes = await http_post(tokenUrl, playHeaders(tokenUrl, ""), JSON.stringify(playBody));
-            const playData = JSON.parse(tokenRes.body);
-
-            const streams = [];
-            const sources = playData.data && (playData.data.sources || playData.data.playUrls) || [];
-            for (let i = 0; i < sources.length; i++) {
-                const src = sources[i];
-                const streamUrl = src.url || src.playUrl;
-                if (!streamUrl) continue;
-                const quality = topQuality(src.quality || src.label || streamUrl);
-                const audioLang = src.audioLang || src.language || src.lang || "Unknown";
-                const provider = "MovieBox";
-                const label = provider + " (" + audioLang + " Audio) " + quality;
-                streams.push(new StreamResult({
-                    name: label,
-                    url: streamUrl,
-                    source: provider,
-                    quality: quality,
-                    headers: { "User-Agent": UA_ONEROOM, "Referer": API_BASE },
-                    subtitles: (playData.data && playData.data.subtitles || []).map(function(sub){
-                        return { url: sub.url, label: sub.label || sub.lang, lang: sub.lang || "en" };
-                    })
-                }));
+            
+            let streams = [];
+            let lastError = "";
+            
+            // Try ALL known API endpoints - including GET methods
+            const endpoints = [
+                { base: API_BASE, path: "/wefeed-mobile-bff/subject-api/play", method: "POST", body: playBody },
+                { base: API_BASE, path: "/wefeed-mobile-bff/subject-api/get?subjectId=" + id + "&play=1", method: "GET" },
+                { base: API_BASE, path: "/subject-api/play?subjectId=" + id, method: "GET" },
+                { base: "https://api.aoneroom.com", path: "/wefeed-mobile-bff/subject-api/play", method: "POST", body: playBody },
+                { base: "https://api2.aoneroom.com", path: "/wefeed-mobile-bff/subject-api/play", method: "POST", body: playBody },
+                { base: "https://api4.aoneroom.com", path: "/wefeed-mobile-bff/subject-api/play", method: "POST", body: playBody },
+            ];
+            
+            for (const ep of endpoints) {
+                try {
+                    const tokenUrl = ep.base + ep.path;
+                    let playData;
+                    if (ep.method === "GET") {
+                        playData = await apiGet(tokenUrl);
+                    } else {
+                        playData = await apiPost(tokenUrl, playBody, true);
+                    }
+                    if (playData && playData.data) {
+                        const sources = playData.data.sources || playData.data.playUrls || playData.data.streams || [];
+                        for (const src of sources) {
+                            const streamUrl = src.url || src.playUrl || src.streamUrl || src.link || src.file;
+                            if (!streamUrl) continue;
+                            const quality = topQuality(src.quality || src.label || streamUrl);
+                            const audioLang = src.audioLang || src.language || src.lang || "Unknown";
+                            streams.push(new StreamResult({
+                                name: "MovieBox (" + audioLang + " Audio) " + quality,
+                                url: streamUrl,
+                                source: "MovieBox",
+                                quality: quality,
+                                headers: { "User-Agent": UA_ONEROOM, "Referer": ep.base + "/" }
+                            }));
+                        }
+                    }
+                    if (streams.length > 0) break;
+                } catch (e) {
+                    lastError = e.message;
+                    continue;
+                }
             }
-            if (streams.length === 0 && playData.data && playData.data.directUrl) {
-                streams.push(new StreamResult({
-                    name: "MovieBox (Direct) " + topQuality(playData.data.directUrl),
-                    url: playData.data.directUrl,
-                    source: "MovieBox"
-                }));
+            
+            // If still no streams, try the CDN hosts directly
+            if (streams.length === 0) {
+                const cdnHosts = ["sacdn.hakunaymatata.com", "bcdn4.hakunaymatata.com", "cdn.hakunaymatata.com"];
+                for (const cdn of cdnHosts) {
+                    try {
+                        const cdnUrl = "https://" + cdn + "/stream/" + id;
+                        const cdnRes = await http_get(cdnUrl, { "User-Agent": UA_ONEROOM, "Referer": "https://api3.aoneroom.com/" });
+                        if (cdnRes.status === 200 && cdnRes.body) {
+                            const body = cdnRes.body;
+                            const urlMatches = body.match(/(https?:\/\/[^"'>\s]+\.(?:mp4|m3u8|mpd)[^"'<\s]*)/g);
+                            if (urlMatches) {
+                                for (const m of urlMatches) {
+                                    streams.push(new StreamResult({
+                                        name: "MovieBox " + topQuality(m),
+                                        url: m,
+                                        source: "MovieBox",
+                                        quality: topQuality(m),
+                                        headers: { "Referer": "https://" + cdn + "/" }
+                                    }));
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                }
             }
+            
+            if (streams.length === 0) {
+                cb({ success: false, error: "No streams found. " + lastError });
+                return;
+            }
+            
             cb({ success: true, data: streams });
         } catch (e) {
             cb({ success: false, error: e.message });
