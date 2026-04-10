@@ -42,6 +42,25 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cncverse.moviebox.sky"
   },
   {
+    "packageName": "dev.george.telugu.teluguott",
+    "name": "Telugu OTT",
+    "version": 2,
+    "baseUrl": "https://www.themoviedb.org",
+    "description": "Telugu content with English titles - Latest OTT releases from Netflix, Amazon Prime & Aha combined",
+    "authors": [
+      "george"
+    ],
+    "languages": [
+      "te",
+      "en"
+    ],
+    "categories": [
+      "movies",
+      "tvseries"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.george.telugu.teluguott.sky"
+  },
+  {
     "packageName": "com.george675.plugins.hindmovie",
     "name": "HindMovie",
     "version": 8,
