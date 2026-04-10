@@ -1,0 +1,10 @@
+{
+  "packageName": "dev.george.telugu.teluguott",
+  "name": "Telugu OTT",
+  "version": 2,
+  "baseUrl": "https://www.themoviedb.org",
+  "description": "Telugu content with English titles - Latest OTT releases from Netflix, Amazon Prime & Aha combined",
+  "authors": ["george"],
+  "languages": ["te", "en"],
+  "categories": ["movies", "tvseries"]
+}
