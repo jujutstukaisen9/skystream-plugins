@@ -18,30 +18,6 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cinemacity.repo.sky"
   },
   {
-    "packageName": "com.cncverse.moviebox",
-    "name": "MovieBox",
-    "version": 2,
-    "baseUrl": "https://api3.aoneroom.com",
-    "description": "MovieBox provider — Bollywood, Hollywood, South Indian, Anime, K-Drama, and more. Multi-audio & subtitle support.",
-    "authors": [
-      "NivinCNC",
-      "CNCVerse"
-    ],
-    "language": "hi",
-    "supportedTypes": [
-      "movie",
-      "series",
-      "anime"
-    ],
-    "iconUrl": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/master/MovieBoxProvider/icon.png",
-    "repositoryUrl": "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension",
-    "hasHomePage": true,
-    "hasChromecast": false,
-    "requiresLogin": false,
-    "isNsfw": false,
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cncverse.moviebox.sky"
-  },
-  {
     "packageName": "com.tellybiz.plugin",
     "name": "Tellybiz",
     "version": 1,
