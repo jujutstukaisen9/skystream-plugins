@@ -18,6 +18,26 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.cinemacity.repo.sky"
   },
   {
+    "packageName": "dev.skystream.moviezwap.moviezwap",
+    "name": "Moviezwap",
+    "version": 1,
+    "baseUrl": "https://www.moviezwap.toys",
+    "description": "Telugu & Tamil movies provider - Latest releases in multiple qualities",
+    "authors": [
+      "Moviezwap Team"
+    ],
+    "languages": [
+      "te",
+      "ta",
+      "hi"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/dev.skystream.moviezwap.moviezwap.sky"
+  },
+  {
     "packageName": "com.tellybiz.plugin",
     "name": "Tellybiz",
     "version": 1,
