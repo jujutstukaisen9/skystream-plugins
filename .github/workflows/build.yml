@@ -27,7 +27,7 @@ jobs:
         run: |
           cat > repo.json <<'JSON'
           {
-            "name": "Telugu-Repository",
+            "name": "Hindi & south content",
             "packageName": "sky.delta",
             "description": "SkyStream plugins repository",
             "manifestVersion": 1,
