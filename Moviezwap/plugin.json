@@ -1,8 +1,8 @@
 {
   "packageName": "dev.skystream.moviezwap.moviezwap",
   "name": "Moviezwap",
-  "version": 1,
-  "baseUrl": "https://www.moviezwap.toys",
+  "version": 2,
+  "baseUrl": "https://www.moviezwap.date",
   "description": "Telugu & Tamil movies provider - Latest releases in multiple qualities",
   "authors": [
     "Moviezwap Team"
