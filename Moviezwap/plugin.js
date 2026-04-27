@@ -9,7 +9,7 @@
     };
 
     function getBaseUrl() {
-        return manifest?.baseUrl || "https://www.moviezwap.toys";
+        return manifest?.baseUrl || "https://www.moviezwap.date";
     }
 
     function fixUrl(url) {
