@@ -2,7 +2,7 @@
   {
     "packageName": "com.cinemacity.repo",
     "name": "Cinemacity",
-    "version": 1,
+    "version": 2,
     "baseUrl": "https://cinemacity.cc",
     "description": "Cinemacity - Watch Movies & TV Series (Multi-Lang/Audio)",
     "authors": [
