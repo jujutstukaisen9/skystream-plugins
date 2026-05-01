@@ -99,5 +99,30 @@
       "Movie"
     ],
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/delta.5movierulz.sky"
+  },
+  {
+    "packageName": "com.sunriseve.teluguscreen",
+    "name": "TeluguScreen",
+    "version": 1,
+    "baseUrl": "https://teluguscreen.com",
+    "description": "TeluguScreen movies and TV shows",
+    "authors": [
+      "sunriseve"
+    ],
+    "languages": [
+      "te",
+      "en"
+    ],
+    "categories": [
+      "Movies",
+      "TV Shows"
+    ],
+    "domains": [
+      {
+        "name": "teluguscreen.com",
+        "url": "https://teluguscreen.com"
+      }
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/skystream-plugins/repo/dist/com.sunriseve.teluguscreen.sky"
   }
 ]
