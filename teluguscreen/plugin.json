@@ -1,0 +1,13 @@
+{
+  "packageName": "com.sunriseve.teluguscreen",
+  "name": "TeluguScreen",
+  "version": 1,
+  "baseUrl": "https://teluguscreen.com",
+  "description": "TeluguScreen movies and TV shows",
+  "authors": ["sunriseve"],
+  "languages": ["te", "en"],
+  "categories": ["Movies", "TV Shows"],
+  "domains": [
+    { "name": "teluguscreen.com", "url": "https://teluguscreen.com" }
+  ]
+}
