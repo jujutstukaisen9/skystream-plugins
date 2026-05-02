@@ -39,6 +39,27 @@
         return 'Classic';
     }
 
+    function buildStreams(movie) {
+        var streams = [];
+        var quals = movie.qualities || {};
+        var keys = ['Q360p', 'Q480p', 'Q720p'];
+
+        keys.forEach(function(key) {
+            var streamUrl = quals[key];
+            var label = key.replace('Q', '');
+
+            if (streamUrl && typeof streamUrl === 'string' && streamUrl.indexOf('.mp4') !== -1) {
+                streams.push(new StreamResult({
+                    url: streamUrl,
+                    quality: label,
+                    source: label
+                }));
+            }
+        });
+
+        return streams;
+    }
+
     async function getHome(cb) {
         try {
             var movies = await fetchMovies();
@@ -148,32 +169,7 @@
                 return cb({ success: false, errorCode: 'NOT_FOUND', message: 'Movie not found' });
             }
 
-            var streams = [];
-            var qualities = movie.qualities || {};
-            if (qualities.Q360p && qualities.Q360p.indexOf('.mp4') !== -1) {
-                var sizes = qualities.Sizes || {};
-                streams.push(new StreamResult({
-                    url: qualities.Q360p,
-                    quality: '360p',
-                    source: '360p' + (sizes.Q360p ? ' (' + sizes.Q360p + ')' : '')
-                }));
-            }
-            if (qualities.Q480p && qualities.Q480p.indexOf('.mp4') !== -1) {
-                var sizes = qualities.Sizes || {};
-                streams.push(new StreamResult({
-                    url: qualities.Q480p,
-                    quality: '480p',
-                    source: '480p' + (sizes.Q480p ? ' (' + sizes.Q480p + ')' : '')
-                }));
-            }
-            if (qualities.Q720p && qualities.Q720p.indexOf('.mp4') !== -1) {
-                var sizes = qualities.Sizes || {};
-                streams.push(new StreamResult({
-                    url: qualities.Q720p,
-                    quality: '720p',
-                    source: '720p' + (sizes.Q720p ? ' (' + sizes.Q720p + ')' : '')
-                }));
-            }
+            var streams = buildStreams(movie);
 
             var item = new MultimediaItem({
                 title: movie.title,
@@ -192,9 +188,12 @@
             });
 
             if (streams.length > 0) {
+                var episodeUrls = streams.map(function(s) {
+                    return { url: s.url, quality: s.quality };
+                });
                 item.episodes = [new Episode({
                     name: 'Play Movie',
-                    url: JSON.stringify(streams),
+                    url: JSON.stringify(episodeUrls),
                     season: 1,
                     episode: 1
                 })];
@@ -211,8 +210,14 @@
             var streams = [];
             try {
                 var parsed = JSON.parse(url);
-                if (Array.isArray(parsed)) {
-                    streams = parsed;
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    parsed.forEach(function(s) {
+                        streams.push(new StreamResult({
+                            url: s.url,
+                            quality: s.quality || '',
+                            source: s.source || ''
+                        }));
+                    });
                 }
             } catch (e) {
                 var idMatch = url.match(/id=([^&]+)/);
@@ -234,53 +239,7 @@
                     return cb({ success: false, errorCode: 'NOT_FOUND', message: 'Movie not found' });
                 }
 
-                var qualities = movie.qualities || {};
-                if (qualities.Q360p && qualities.Q360p.indexOf('.mp4') !== -1) {
-                    var sizes = qualities.Sizes || {};
-                    streams.push(new StreamResult({
-                        url: qualities.Q360p,
-                        quality: '360p',
-                        source: '360p' + (sizes.Q360p ? ' (' + sizes.Q360p + ')' : '')
-                    }));
-                }
-                if (qualities.Q480p && qualities.Q480p.indexOf('.mp4') !== -1) {
-                    var sizes = qualities.Sizes || {};
-                    streams.push(new StreamResult({
-                        url: qualities.Q480p,
-                        quality: '480p',
-                        source: '480p' + (sizes.Q480p ? ' (' + sizes.Q480p + ')' : '')
-                    }));
-                }
-                if (qualities.Q720p && qualities.Q720p.indexOf('.mp4') !== -1) {
-                    var sizes = qualities.Sizes || {};
-                    streams.push(new StreamResult({
-                        url: qualities.Q720p,
-                        quality: '720p',
-                        source: '720p' + (sizes.Q720p ? ' (' + sizes.Q720p + ')' : '')
-                    }));
-                }
-
-                if (movie.moviePath360p && movie.moviePath360p.indexOf('.mp4') !== -1 && qualities.Q360p !== movie.moviePath360p) {
-                    streams.push(new StreamResult({
-                        url: movie.moviePath360p,
-                        quality: '360p',
-                        source: '360p (Alt)'
-                    }));
-                }
-                if (movie.moviePath480p && movie.moviePath480p.indexOf('.mp4') !== -1 && qualities.Q480p !== movie.moviePath480p) {
-                    streams.push(new StreamResult({
-                        url: movie.moviePath480p,
-                        quality: '480p',
-                        source: '480p (Alt)'
-                    }));
-                }
-                if (movie.moviePath720p && movie.moviePath720p.indexOf('.mp4') !== -1 && qualities.Q720p !== movie.moviePath720p) {
-                    streams.push(new StreamResult({
-                        url: movie.moviePath720p,
-                        quality: '720p',
-                        source: '720p (Alt)'
-                    }));
-                }
+                streams = buildStreams(movie);
             }
 
             if (streams.length === 0) {
